@@ -55,6 +55,7 @@ class MatchRequest:
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
     duration_filter: DurationFilter = field(default_factory=DurationFilter)
     max_workers: int = 4
+    hwaccel: str | None = None
     refresh_index: bool = False
     tvdb_extended: bool = True
     refine: bool = False
@@ -144,7 +145,9 @@ def run_match(
         if (url := still.url) in still_hashes and images.path_for(still).exists()
     }
 
-    indexer = FrameIndexer(FrameIndexCache(cache.frames_dir), request.index_params)
+    indexer = FrameIndexer(
+        FrameIndexCache(cache.frames_dir), request.index_params, hwaccel=request.hwaccel
+    )
     indexes = build_indexes(
         indexer, candidates, max_workers=request.max_workers, refresh=request.refresh_index
     )

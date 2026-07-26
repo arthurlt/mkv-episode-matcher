@@ -22,10 +22,12 @@ from .models import SkipReason, VideoFile
 __all__ = [
     "DurationFilter",
     "ProbeError",
+    "StreamInfo",
     "find_mkv_files",
     "inventory",
     "probe_dimensions",
     "probe_duration",
+    "probe_stream",
     "probe_video",
 ]
 
@@ -119,11 +121,27 @@ def probe_duration(path: Path) -> float:
     return duration
 
 
-def probe_dimensions(path: Path) -> tuple[int, int]:
-    """Return the ``(width, height)`` of the first video stream in ``path``.
+@dataclass(frozen=True, slots=True)
+class StreamInfo:
+    """The facts about a file's video stream that the extractor needs up front.
 
-    The frame extractor needs the exact decoded frame size up front so it can
-    read fixed-size records off a raw ``ffmpeg`` pipe.
+    Attributes
+    ----------
+    width, height
+        Decoded frame size, needed to read fixed-size records off a raw pipe.
+    codec_name
+        Used to decide whether hardware decoding is worth attempting: GPU
+        support is per-codec, so a card that handles H.264 may still have no
+        MPEG-2 decoder at all.
+    """
+
+    width: int
+    height: int
+    codec_name: str
+
+
+def probe_stream(path: Path) -> StreamInfo:
+    """Return the size and codec of the first video stream in ``path``.
 
     Raises
     ------
@@ -137,7 +155,7 @@ def probe_dimensions(path: Path) -> tuple[int, int]:
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=width,height",
+        "stream=width,height,codec_name",
         "-of",
         "json",
         str(path),
@@ -154,7 +172,13 @@ def probe_dimensions(path: Path) -> tuple[int, int]:
         raise ProbeError(f"no video stream found in {path}") from error
     if width <= 0 or height <= 0:
         raise ProbeError(f"video stream in {path} has a degenerate size")
-    return width, height
+    return StreamInfo(width=width, height=height, codec_name=str(stream.get("codec_name") or ""))
+
+
+def probe_dimensions(path: Path) -> tuple[int, int]:
+    """Return the ``(width, height)`` of the first video stream in ``path``."""
+    info = probe_stream(path)
+    return info.width, info.height
 
 
 def probe_video(path: Path) -> VideoFile:

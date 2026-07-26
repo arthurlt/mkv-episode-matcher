@@ -188,6 +188,7 @@ def encode_video(
     *,
     seconds_per_frame: float = 1.0,
     fps: int = 10,
+    keyframe_interval_s: float | None = None,
 ) -> Path:
     """Encode ``frames`` into a small MKV, holding each frame for a fixed time.
 
@@ -201,6 +202,10 @@ def encode_video(
         How long each supplied frame is held on screen.
     fps
         Output frame rate of the encoded video.
+    keyframe_interval_s
+        Force a keyframe this often. Real disc encodes place them every half
+        second to two seconds; the default here leaves it to the encoder, which
+        for this synthetic content means almost none.
 
     Returns
     -------
@@ -210,6 +215,9 @@ def encode_video(
     height, width = frames[0].shape
     repeats = max(1, round(seconds_per_frame * fps))
     raw = b"".join(bytes(frame) for frame in frames for _ in range(repeats))
+    keyframe_args = []
+    if keyframe_interval_s is not None:
+        keyframe_args = ["-g", str(max(1, round(keyframe_interval_s * fps))), "-sc_threshold", "0"]
     command = [
         "ffmpeg",
         "-hide_banner",
@@ -232,6 +240,7 @@ def encode_video(
         "ultrafast",
         "-crf",
         "18",
+        *keyframe_args,
         "-pix_fmt",
         "yuv420p",
         str(destination),
@@ -250,10 +259,16 @@ def video_factory(tmp_path: Path) -> Iterator[object]:
         *,
         seconds_per_frame: float = 1.0,
         directory: Path | None = None,
+        keyframe_interval_s: float | None = None,
     ) -> Path:
         target_dir = directory or tmp_path
         target_dir.mkdir(parents=True, exist_ok=True)
         frames = [make_pattern(seed) for seed in seeds]
-        return encode_video(target_dir / name, frames, seconds_per_frame=seconds_per_frame)
+        return encode_video(
+            target_dir / name,
+            frames,
+            seconds_per_frame=seconds_per_frame,
+            keyframe_interval_s=keyframe_interval_s,
+        )
 
     return factory

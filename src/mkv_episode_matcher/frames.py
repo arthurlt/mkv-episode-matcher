@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
@@ -29,7 +30,7 @@ from PIL import Image
 
 from .models import VideoFile
 from .normalize import hamming_distances, hash_array
-from .probe import probe_dimensions
+from .probe import probe_stream
 
 __all__ = [
     "FrameExtractionError",
@@ -40,7 +41,10 @@ __all__ = [
     "IndexParams",
     "build_indexes",
     "extract_frame_hashes",
+    "forget_hwaccel_failures",
     "grab_frame",
+    "hwaccel_has_failed",
+    "hwaccel_supported",
     "parse_showinfo_timestamps",
 ]
 
@@ -48,6 +52,10 @@ logger = logging.getLogger(__name__)
 
 #: Bumped whenever the on-disk index layout or the hashing pipeline changes.
 INDEX_FORMAT_VERSION = 1
+
+#: How much coarser than the requested interval keyframe sampling may get before
+#: it is worth telling the user their stills may be falling through the gaps.
+_SPARSE_KEYFRAME_RATIO = 2.0
 
 
 class FrameExtractionError(RuntimeError):
@@ -77,6 +85,10 @@ class IndexParams:
     sample_width
         Width frames are scaled to before hashing. Downscaling in ``ffmpeg`` is
         far cheaper than doing it in Python, and the hash only needs 32x32.
+    keyframes_only
+        Decode only keyframes. Several times cheaper, because inter frames are
+        never reconstructed, but sampling is then limited to wherever the
+        encoder happened to place its keyframes.
 
     Examples
     --------
@@ -84,12 +96,15 @@ class IndexParams:
     1.0
     >>> IndexParams(interval_s=2.0).fingerprint != IndexParams().fingerprint
     True
+    >>> IndexParams(keyframes_only=True).fingerprint != IndexParams().fingerprint
+    True
     """
 
     interval_s: float = 1.0
     skip_head_s: float = 0.0
     skip_tail_s: float = 0.0
     sample_width: int = 320
+    keyframes_only: bool = False
 
     def __post_init__(self) -> None:
         """Validate the sampling settings."""
@@ -110,6 +125,7 @@ class IndexParams:
                 "skip_head_s": round(self.skip_head_s, 6),
                 "skip_tail_s": round(self.skip_tail_s, 6),
                 "sample_width": self.sample_width,
+                "keyframes_only": self.keyframes_only,
             },
             sort_keys=True,
         )
@@ -184,6 +200,7 @@ class FrameIndex:
                 "skip_head_s": self.params.skip_head_s,
                 "skip_tail_s": self.params.skip_tail_s,
                 "sample_width": self.params.sample_width,
+                "keyframes_only": self.params.keyframes_only,
             },
         }
         temporary = path.with_suffix(".tmp.npz")
@@ -297,12 +314,16 @@ class FrameStream:
         duration_s: float | None,
         interval_s: float,
         size: tuple[int, int],
+        hwaccel: str | None = None,
+        keyframes_only: bool = False,
     ) -> None:
         self.path = path
         self.start_s = start_s
         self.duration_s = duration_s
         self.interval_s = interval_s
         self.size = size
+        self.hwaccel = hwaccel
+        self.keyframes_only = keyframes_only
         self.timestamps: list[float] = []
 
     def command(self) -> list[str]:
@@ -310,6 +331,11 @@ class FrameStream:
         width, height = self.size
         select = f"select=isnan(prev_selected_t)+gte(t-prev_selected_t\\,{self.interval_s:.6f})"
         command = [require_ffmpeg(), "-hide_banner", "-nostdin", "-v", "info"]
+        # Both are decoder options, so they must precede the input they apply to.
+        if self.hwaccel:
+            command += ["-hwaccel", self.hwaccel]
+        if self.keyframes_only:
+            command += ["-skip_frame", "nokey"]
         if self.start_s > 0:
             command += ["-ss", f"{self.start_s:.3f}"]
         command += ["-i", str(self.path)]
@@ -365,6 +391,93 @@ class FrameStream:
             self.timestamps = [self.start_s + value for value in parse_showinfo_timestamps(log)]
 
 
+#: Caches whether ``(method, codec)`` can be hardware-decoded on this machine.
+#: GPU support is per-codec: a card may decode H.264 but have no MPEG-2 unit at
+#: all, so a single global answer would be wrong.
+_HWACCEL_SUPPORT: dict[tuple[str, str], bool] = {}
+_HWACCEL_LOCK = threading.Lock()
+
+
+def hwaccel_has_failed(method: str, codec: str) -> bool:
+    """Return whether ``method`` is known not to work for ``codec`` in this run."""
+    return _HWACCEL_SUPPORT.get((method, codec)) is False
+
+
+def forget_hwaccel_failures() -> None:
+    """Clear the cached hardware-decode probe results."""
+    with _HWACCEL_LOCK:
+        _HWACCEL_SUPPORT.clear()
+
+
+def hwaccel_supported(method: str, path: Path, codec: str) -> bool:
+    """Return whether ``method`` can decode ``codec``, probing once per run.
+
+    Decoding a single frame is far cheaper than discovering the problem part
+    way through a full-length file, and doing it under a lock means a machine
+    with no GPU logs one warning rather than one per worker thread.
+
+    Parameters
+    ----------
+    method
+        ffmpeg ``-hwaccel`` method name.
+    path
+        A file using ``codec``, used as the probe subject.
+    codec
+        Codec name, which scopes the cached answer.
+
+    Returns
+    -------
+    bool
+        Whether hardware decoding should be attempted.
+    """
+    key = (method, codec)
+    cached = _HWACCEL_SUPPORT.get(key)
+    if cached is not None:
+        return cached
+
+    with _HWACCEL_LOCK:
+        cached = _HWACCEL_SUPPORT.get(key)
+        if cached is not None:
+            return cached
+
+        command = [
+            require_ffmpeg(),
+            "-hide_banner",
+            "-nostdin",
+            "-v",
+            "error",
+            "-hwaccel",
+            method,
+            "-i",
+            str(path),
+            "-an",
+            "-sn",
+            "-dn",
+            "-frames:v",
+            "1",
+            "-f",
+            "null",
+            "-",
+        ]
+        try:
+            completed = subprocess.run(command, capture_output=True, timeout=60, check=False)
+            works = completed.returncode == 0
+        except (OSError, subprocess.SubprocessError) as error:
+            logger.debug("hwaccel probe for %s/%s errored: %s", method, codec, error)
+            works = False
+
+        if works:
+            logger.info("using %s hardware decoding for %s", method, codec or "this codec")
+        else:
+            logger.warning(
+                "hardware decoding (%s) is unavailable for %s; using software decoding",
+                method,
+                codec or "this codec",
+            )
+        _HWACCEL_SUPPORT[key] = works
+        return works
+
+
 def extract_frame_hashes(
     path: Path,
     *,
@@ -372,23 +485,65 @@ def extract_frame_hashes(
     duration_s: float | None,
     interval_s: float,
     size: tuple[int, int],
+    hwaccel: str | None = None,
+    keyframes_only: bool = False,
+    codec: str = "",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Decode ``path`` on a cadence and hash every sampled frame.
+
+    When ``hwaccel`` is requested but unavailable, ffmpeg exits non-zero rather
+    than degrading, so the decode is retried in software. Hardware support is
+    per-codec, so the failure is remembered against this file's codec: a card
+    that decodes H.264 but not MPEG-2 keeps its acceleration for the former.
+
+    Parameters
+    ----------
+    hwaccel
+        ffmpeg ``-hwaccel`` method, or ``None`` for software decoding.
+    keyframes_only
+        Decode only keyframes.
+    codec
+        Codec of the video stream, used to scope hardware-decode failures.
 
     Returns
     -------
     tuple of numpy.ndarray
         ``(timestamps, phashes, dhashes)``, aligned and equal in length.
     """
-    stream = FrameStream(
-        path, start_s=start_s, duration_s=duration_s, interval_s=interval_s, size=size
-    )
-    phashes: list[int] = []
-    dhashes: list[int] = []
-    for frame in stream:
-        hashes = hash_array(frame)
-        phashes.append(hashes.phash)
-        dhashes.append(hashes.dhash)
+    if hwaccel and not hwaccel_supported(hwaccel, path, codec):
+        hwaccel = None
+
+    try:
+        stream, phashes, dhashes = _decode_and_hash(
+            path,
+            start_s=start_s,
+            duration_s=duration_s,
+            interval_s=interval_s,
+            size=size,
+            hwaccel=hwaccel,
+            keyframes_only=keyframes_only,
+        )
+    except FrameExtractionError:
+        if not hwaccel:
+            raise
+        # The probe passed but the full decode did not; distrust the device from
+        # here rather than failing a file that software decoding can handle.
+        with _HWACCEL_LOCK:
+            _HWACCEL_SUPPORT[(hwaccel, codec)] = False
+        logger.warning(
+            "hardware decoding (%s) failed part way through %s; retrying in software",
+            hwaccel,
+            path.name,
+        )
+        stream, phashes, dhashes = _decode_and_hash(
+            path,
+            start_s=start_s,
+            duration_s=duration_s,
+            interval_s=interval_s,
+            size=size,
+            hwaccel=None,
+            keyframes_only=keyframes_only,
+        )
 
     timestamps = stream.timestamps
     if len(timestamps) != len(phashes):
@@ -406,6 +561,35 @@ def extract_frame_hashes(
         np.asarray(phashes, dtype=np.uint64),
         np.asarray(dhashes, dtype=np.uint64),
     )
+
+
+def _decode_and_hash(
+    path: Path,
+    *,
+    start_s: float,
+    duration_s: float | None,
+    interval_s: float,
+    size: tuple[int, int],
+    hwaccel: str | None,
+    keyframes_only: bool,
+) -> tuple[FrameStream, list[int], list[int]]:
+    """Run one decode pass, returning the stream and the hashes it produced."""
+    stream = FrameStream(
+        path,
+        start_s=start_s,
+        duration_s=duration_s,
+        interval_s=interval_s,
+        size=size,
+        hwaccel=hwaccel,
+        keyframes_only=keyframes_only,
+    )
+    phashes: list[int] = []
+    dhashes: list[int] = []
+    for frame in stream:
+        hashes = hash_array(frame)
+        phashes.append(hashes.phash)
+        dhashes.append(hashes.dhash)
+    return stream, phashes, dhashes
 
 
 def grab_frame(path: Path, timestamp_s: float) -> Image.Image:
@@ -491,11 +675,21 @@ class FrameIndexCache:
 
 
 class FrameIndexer:
-    """Builds frame-hash indexes, reusing cached ones whenever they are valid."""
+    """Builds frame-hash indexes, reusing cached ones whenever they are valid.
 
-    def __init__(self, cache: FrameIndexCache, params: IndexParams) -> None:
+    ``hwaccel`` is deliberately not part of the index fingerprint. Video
+    decoding is bit-exact by specification, so a hardware decoder returns the
+    same pixels as a software one and the hashes are unchanged; making it a
+    cache key would force a whole season to be re-indexed for no benefit the
+    first time someone tries the flag.
+    """
+
+    def __init__(
+        self, cache: FrameIndexCache, params: IndexParams, *, hwaccel: str | None = None
+    ) -> None:
         self.cache = cache
         self.params = params
+        self.hwaccel = hwaccel
 
     def get(self, video: VideoFile, *, refresh: bool = False) -> FrameIndex:
         """Return the frame index for ``video``, building it only if needed.
@@ -519,15 +713,19 @@ class FrameIndexer:
 
     def build(self, video: VideoFile) -> FrameIndex:
         """Decode and hash ``video`` from scratch."""
-        size = _scaled_size(probe_dimensions(video.path), self.params.sample_width)
+        info = probe_stream(video.path)
+        size = _scaled_size((info.width, info.height), self.params.sample_width)
         span = video.duration_s - self.params.skip_head_s - self.params.skip_tail_s
         duration = span if span > 0 else None
         logger.info(
-            "indexing %s (%.0fs, every %.2fs, %dx%d)",
+            "indexing %s (%.0fs, every %.2fs, %dx%d, %s%s%s)",
             video.name,
             video.duration_s,
             self.params.interval_s,
             *size,
+            info.codec_name or "unknown codec",
+            f", {self.hwaccel} decode" if self.hwaccel else "",
+            ", keyframes only" if self.params.keyframes_only else "",
         )
         timestamps, phashes, dhashes = extract_frame_hashes(
             video.path,
@@ -535,10 +733,14 @@ class FrameIndexer:
             duration_s=duration,
             interval_s=self.params.interval_s,
             size=size,
+            hwaccel=self.hwaccel,
+            keyframes_only=self.params.keyframes_only,
+            codec=info.codec_name,
         )
         if timestamps.size == 0:
             raise FrameExtractionError(f"no frames could be decoded from {video.path}")
         logger.info("indexed %s: %d frames", video.name, timestamps.size)
+        self._warn_if_too_sparse(video, timestamps)
         return FrameIndex(
             video_path=video.path,
             params=self.params,
@@ -549,6 +751,36 @@ class FrameIndexer:
             source_mtime_ns=video.mtime_ns,
         )
 
+    def _warn_if_too_sparse(self, video: VideoFile, timestamps: np.ndarray) -> None:
+        """Warn when keyframe-only decoding sampled far less than was asked for.
+
+        Encoders vary wildly in how often they place keyframes. DVD MPEG-2 puts
+        one roughly every half second, but a Blu-ray encode can go many seconds
+        between them, and a still that falls in such a gap is simply invisible.
+        Silently returning "unmatched" would look like the matcher failing
+        rather than the sampling being too coarse to see anything.
+        """
+        if not self.params.keyframes_only or timestamps.size == 0:
+            return
+        covered = video.duration_s - self.params.skip_head_s - self.params.skip_tail_s
+        if covered <= 0:
+            return
+        # Compare sample counts rather than the span between first and last
+        # sample, so a file with a single keyframe reads as maximally sparse
+        # instead of as a zero-length, apparently perfect span.
+        wanted = max(1.0, covered / self.params.interval_s)
+        achieved_interval = covered / timestamps.size
+        if timestamps.size * _SPARSE_KEYFRAME_RATIO < wanted:
+            logger.warning(
+                "%s has keyframes only every %.1fs on average, far coarser than the "
+                "requested %.1fs sampling; stills falling between them cannot be found. "
+                "Consider dropping --keyframes-only, or adding --refine to re-check "
+                "promising hits.",
+                video.name,
+                achieved_interval,
+                self.params.interval_s,
+            )
+
     def extract_window(
         self, video: VideoFile, *, start_s: float, end_s: float, interval_s: float
     ) -> FrameIndex:
@@ -558,17 +790,27 @@ class FrameIndexer:
         whole file coarsely, then re-sample only around promising hits.
         """
         start = max(0.0, start_s)
-        size = _scaled_size(probe_dimensions(video.path), self.params.sample_width)
+        info = probe_stream(video.path)
+        size = _scaled_size((info.width, info.height), self.params.sample_width)
+        # Refinement deliberately decodes every frame: the point of the pass is
+        # to see what a keyframe-limited or coarse first pass could not.
         timestamps, phashes, dhashes = extract_frame_hashes(
             video.path,
             start_s=start,
             duration_s=max(interval_s, end_s - start),
             interval_s=interval_s,
             size=size,
+            hwaccel=self.hwaccel,
+            codec=info.codec_name,
         )
         return FrameIndex(
             video_path=video.path,
-            params=replace(self.params, interval_s=interval_s, skip_head_s=start),
+            params=replace(
+                self.params,
+                interval_s=interval_s,
+                skip_head_s=start,
+                keyframes_only=False,
+            ),
             timestamps=timestamps,
             phashes=phashes,
             dhashes=dhashes,

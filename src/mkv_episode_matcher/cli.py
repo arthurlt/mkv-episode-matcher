@@ -103,6 +103,23 @@ def match(
     sample_width: Annotated[
         int, typer.Option("--sample-width", min=32, help="Width frames are scaled to for hashing.")
     ] = 320,
+    hwaccel: Annotated[
+        str | None,
+        typer.Option(
+            "--hwaccel",
+            help=(
+                "ffmpeg hardware decoder, e.g. auto, vaapi, cuda, qsv, videotoolbox. "
+                "Falls back to software if the device is unavailable."
+            ),
+        ),
+    ] = None,
+    keyframes_only: Annotated[
+        bool,
+        typer.Option(
+            "--keyframes-only",
+            help="Decode only keyframes. Much faster; sampling follows the encoder's GOP.",
+        ),
+    ] = False,
     skip_head: Annotated[
         float, typer.Option("--skip-head", min=0.0, help="Seconds to ignore at the start.")
     ] = 0.0,
@@ -211,6 +228,7 @@ def match(
                 skip_head_s=skip_head,
                 skip_tail_s=skip_tail,
                 sample_width=sample_width,
+                keyframes_only=keyframes_only,
             ),
             scoring=ScoringConfig(match_threshold=threshold, decision_gap=gap),
             duration_filter=DurationFilter(
@@ -218,6 +236,7 @@ def match(
                 max_duration_s=None if max_minutes is None else max_minutes * 60,
             ),
             max_workers=workers,
+            hwaccel=hwaccel,
             refresh_index=refresh,
             refine=refine,
             refine_interval_s=refine_interval,

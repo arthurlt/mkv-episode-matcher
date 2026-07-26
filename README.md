@@ -99,6 +99,8 @@ file without `--force`, and never touches an `ambiguous`, `unmatched`, or
 | `--gap` | `4.0` | How far the runner-up must lose by before a match is called confident. |
 | `--workers` | `4` | Concurrent ffmpeg processes and downloads. |
 | `--refine` | off | Two-stage mode: index coarsely, then re-sample densely around promising hits. |
+| `--hwaccel` | off | ffmpeg hardware decoder (`auto`, `vaapi`, `cuda`, `qsv`, `videotoolbox`…). |
+| `--keyframes-only` | off | Decode only keyframes. Several times faster; cadence follows the encoder's GOP. |
 | `--min-minutes` | `5` | Skip-floor for menus and trailers. |
 | `--refresh` | off | Rebuild frame indexes even when cached. |
 | `--strict` | off | Exit `2` if any file is still ambiguous or unmatched. |
@@ -107,6 +109,40 @@ file without `--force`, and never touches an `ambiguous`, `unmatched`, or
 Raising `--interval` to 4-5 seconds with `--refine` is the fastest useful
 configuration on a long disc: the coarse pass locates roughly where a still
 lives, and only a few seconds around each candidate get re-decoded densely.
+
+### Decode speed
+
+Indexing is decode-bound — profiling a 1080p source puts **93-99% of the time
+inside ffmpeg** and only 1-6% in Python hashing — so the decoder is the only
+thing worth tuning.
+
+`--hwaccel` offloads decoding to a GPU. It is safe to leave on: hardware
+support is per-codec, so the tool probes one frame per codec, logs a single
+line, and falls back to software when the device cannot help. Note that this
+form still copies every decoded frame back to system memory, so on SD MPEG-2
+it often makes no measurable difference — the gains are on HD H.264/HEVC.
+
+`--keyframes-only` is usually the bigger lever, and needs no GPU at all.
+Measured on 120-second sources:
+
+| Source | Full decode | `--keyframes-only` | Speedup | Frames sampled |
+|---|---|---|---|---|
+| DVD-like MPEG-2, GOP 15 | 1.16s | 0.29s | **4.0x** | 120 → 120 (unchanged) |
+| Blu-ray-like H.264, GOP 48 | 4.03s | 0.58s | **6.9x** | 120 → 63 |
+
+DVD encodes place a keyframe roughly every 0.5s, so keyframe-only sampling
+costs nothing at a 1s interval — it is strictly faster for the same index.
+Blu-ray GOPs are longer, so sampling drops to roughly one frame every 2s.
+
+Where an encode uses very long GOPs, a still can fall in a gap and become
+invisible. The tool detects this and says so rather than reporting a wall of
+unexplained `unmatched` results:
+
+```
+WARNING  title_t01.mkv has keyframes only every 20.0s on average, far coarser than the
+         requested 1.0s sampling; stills falling between them cannot be found. Consider
+         dropping --keyframes-only, or adding --refine to re-check promising hits.
+```
 
 ## How it works
 
