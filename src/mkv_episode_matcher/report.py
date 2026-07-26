@@ -78,6 +78,7 @@ def build_payload(results: Sequence[MatchResult], *, series: str, season: int) -
                 "path": str(result.video.path),
                 "duration_s": round(result.video.duration_s, 3) or None,
                 "status": result.status.value,
+                "confidence": result.confidence,
                 "episode": result.episode.code if result.episode else None,
                 "title": result.episode.title if result.episode else None,
                 "distance": hit.distance if hit else None,
@@ -114,6 +115,7 @@ def write_json(path: Path, payload: dict) -> Path:
 TABLE_COLUMNS = (
     "File",
     "Status",
+    "Conf",
     "Episode",
     "Title",
     "Dist",
@@ -137,6 +139,7 @@ def table_rows(results: Sequence[MatchResult]) -> list[tuple[str, ...]]:
             (
                 result.video.name,
                 result.status.value,
+                "-" if result.confidence is None else f"{result.confidence:.2f}",
                 result.episode.code if result.episode else "-",
                 result.episode.title if result.episode else "-",
                 str(hit.distance) if hit else "-",
@@ -151,7 +154,7 @@ def table_rows(results: Sequence[MatchResult]) -> list[tuple[str, ...]]:
 
 #: Columns dropped entirely when no row has anything to say in them, which
 #: keeps the table readable in a narrow terminal.
-_OPTIONAL_COLUMNS = frozenset({"Title", "Stills", "Runner-up", "Notes"})
+_OPTIONAL_COLUMNS = frozenset({"Title", "Conf", "Stills", "Runner-up", "Notes"})
 _EMPTY_CELLS = frozenset({"", "-"})
 
 
@@ -179,7 +182,7 @@ def render_table(results: Sequence[MatchResult]) -> Table:
     table = Table(title="MKV episode matches", show_lines=False, expand=False)
     for index in columns:
         heading = TABLE_COLUMNS[index]
-        justify = "right" if heading in {"Dist", "Stills", "Found at"} else "left"
+        justify = "right" if heading in {"Conf", "Dist", "Stills", "Found at"} else "left"
         table.add_column(heading, overflow="fold", justify=justify)
 
     for result, row in zip(results, rows, strict=True):

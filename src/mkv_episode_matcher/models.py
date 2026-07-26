@@ -224,6 +224,7 @@ class MatchResult:
     runner_up: Episode | None = None
     runner_up_cost: float | None = None
     supporting_stills: int = 0
+    confidence: float | None = None
     skip_reason: SkipReason | None = None
     notes: list[str] = field(default_factory=list)
 

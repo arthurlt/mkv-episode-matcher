@@ -10,7 +10,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from mkv_episode_matcher.assign import assign, solve_assignment
+from mkv_episode_matcher.assign import assign, confidence_of, solve_assignment
 from mkv_episode_matcher.models import (
     Episode,
     EpisodeScore,
@@ -168,8 +168,63 @@ class TestSolveAssignment:
         assert result[0] != 0
 
 
+class TestConfidence:
+    config = ScoringConfig(match_threshold=12, decision_gap=4.0)
+
+    def test_an_exact_hit_with_a_wide_gap_is_fully_confident(self):
+        assert confidence_of(0.0, 30.0, self.config) == 1.0
+
+    def test_a_hit_at_the_threshold_has_no_confidence(self):
+        assert confidence_of(12.0, 30.0, self.config) == 0.0
+
+    def test_a_dead_heat_has_no_confidence_however_close_the_hit(self):
+        assert confidence_of(0.0, 0.0, self.config) == 0.0
+
+    def test_the_weaker_of_the_two_margins_wins(self):
+        strong_distance_weak_gap = confidence_of(1.0, 1.0, self.config)
+        weak_distance_strong_gap = confidence_of(11.0, 30.0, self.config)
+
+        assert strong_distance_weak_gap == pytest.approx(0.25)
+        assert weak_distance_strong_gap == pytest.approx(1 / 12, abs=0.01)
+
+    def test_an_infinite_gap_is_bounded_by_the_distance_margin(self):
+        assert confidence_of(6.0, INF, self.config) == pytest.approx(0.5)
+
+    @settings(max_examples=50, deadline=None)
+    @given(
+        st.floats(min_value=0, max_value=64, allow_nan=False),
+        st.floats(min_value=0, max_value=100, allow_nan=False),
+    )
+    def test_confidence_always_lands_between_zero_and_one(self, cost, gap):
+        assert 0.0 <= confidence_of(cost, gap, self.config) <= 1.0
+
+    def test_a_zero_gap_requirement_never_penalises_the_gap(self):
+        forgiving = ScoringConfig(match_threshold=12, decision_gap=0.0)
+
+        assert confidence_of(0.0, 0.0, forgiving) == 1.0
+
+
 class TestAssign:
     config = ScoringConfig(match_threshold=12, decision_gap=4.0)
+
+    def test_a_clean_match_is_reported_as_fully_confident(self):
+        scored = [scores_for("a.mkv", {1: 0.0, 2: 40.0})]
+
+        assert assign(scored, config=self.config)[0].confidence == 1.0
+
+    def test_an_ambiguous_result_carries_a_low_confidence(self):
+        scored = [scores_for("a.mkv", {1: 5.0, 2: 6.0})]
+
+        result = assign(scored, config=self.config)[0]
+
+        assert result.status is MatchStatus.AMBIGUOUS
+        assert result.confidence is not None
+        assert result.confidence < 0.5
+
+    def test_an_unmatched_result_has_no_confidence(self):
+        scored = [scores_for("a.mkv", {1: INF})]
+
+        assert assign(scored, config=self.config)[0].confidence is None
 
     def test_clean_diagonal_matches_every_file(self):
         scored = [

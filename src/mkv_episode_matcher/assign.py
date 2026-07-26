@@ -30,7 +30,7 @@ from .models import (
 )
 from .score_visual import ScoringConfig
 
-__all__ = ["assign", "solve_assignment"]
+__all__ = ["assign", "confidence_of", "solve_assignment"]
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +284,7 @@ def _verdict(
     file_gap = INF if runner_up is None else runner_up.cost - best.cost
     episode_gap = _episode_side_gap(cost_matrix, row, ranked[0], episodes)
     chosen_by_solver = column is not None and episodes[column].number == best.episode.number
+    confidence = confidence_of(best.cost, min(file_gap, episode_gap), config)
 
     if chosen_by_solver and file_gap >= config.decision_gap and episode_gap >= config.decision_gap:
         logger.info(
@@ -303,6 +304,7 @@ def _verdict(
             runner_up=runner_up.episode if runner_up else None,
             runner_up_cost=None if runner_up is None or runner_up.cost == INF else runner_up.cost,
             supporting_stills=best.supporting_stills,
+            confidence=confidence,
         )
 
     notes = []
@@ -329,8 +331,35 @@ def _verdict(
         runner_up=runner_up.episode if runner_up else best.episode,
         runner_up_cost=None if runner_up is None or runner_up.cost == INF else runner_up.cost,
         supporting_stills=best.supporting_stills,
+        confidence=confidence,
         notes=notes or [f"best candidate is {best.episode.code}"],
     )
+
+
+def confidence_of(cost: float, gap: float, config: ScoringConfig) -> float:
+    """Rate a candidate from 0 to 1 on its two independent weaknesses.
+
+    This is an ordering aid for triage, not a probability. It is the weaker of
+    two margins: how far below the accept threshold the hit landed, and how
+    decisively it beat the runner-up. A result is only as trustworthy as its
+    weakest margin, so the minimum is taken rather than an average.
+
+    Examples
+    --------
+    >>> config = ScoringConfig(match_threshold=12, decision_gap=4.0)
+    >>> confidence_of(0.0, 20.0, config)
+    1.0
+    >>> confidence_of(12.0, 20.0, config)
+    0.0
+    >>> round(confidence_of(6.0, 2.0, config), 2)
+    0.5
+    """
+    if config.match_threshold <= 0:
+        distance_margin = 1.0 if cost <= 0 else 0.0
+    else:
+        distance_margin = 1.0 - cost / config.match_threshold
+    gap_margin = 1.0 if config.decision_gap <= 0 else gap / config.decision_gap
+    return round(max(0.0, min(1.0, distance_margin, gap_margin)), 3)
 
 
 def _episode_side_gap(

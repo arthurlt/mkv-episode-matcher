@@ -11,21 +11,27 @@ once and searches every published still against it.
 ```
 $ mkv-episode-matcher match ./rips --series "Test Precinct" --season 2
 
-                                          MKV episode matches
-┏━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
-┃ File          ┃ Status  ┃ Episode ┃ Title                        ┃ Dist ┃ Stills ┃ Found at ┃ Runner-up ┃ Notes              ┃
-┡━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
-│ title_t00.mkv │ matched │ S02E03  │ The Second Oldest Profession │    0 │      1 │ 00:14:22 │ S02E02    │                    │
-│ title_t01.mkv │ matched │ S02E01  │ Chipped Beef                 │    0 │      5 │ 00:03:10 │ S02E03    │                    │
-│ title_t02.mkv │ matched │ S02E04  │ Rites of Spring              │    0 │      2 │ 00:21:44 │ S02E03    │                    │
-│ title_t03.mkv │ matched │ S02E02  │ Blood Money                  │    0 │      2 │ 00:08:56 │ S02E03    │                    │
-│ title_t04.mkv │ skipped │ -       │ -                            │    - │      - │        - │ -         │ skipped: too_short │
-└───────────────┴─────────┴─────────┴──────────────────────────────┴──────┴────────┴──────────┴───────────┴────────────────────┘
+                                              MKV episode matches
+┏━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
+┃ File          ┃ Status  ┃ Conf ┃ Episode ┃ Title                        ┃ Dist ┃ Stills ┃ Found at ┃ Runner-up ┃ Notes              ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
+│ title_t00.mkv │ matched │ 1.00 │ S02E03  │ The Second Oldest Profession │    0 │      1 │ 00:14:22 │ S02E02    │                    │
+│ title_t01.mkv │ matched │ 1.00 │ S02E01  │ Chipped Beef                 │    0 │      5 │ 00:03:10 │ S02E03    │                    │
+│ title_t02.mkv │ matched │ 1.00 │ S02E04  │ Rites of Spring              │    0 │      2 │ 00:21:44 │ S02E03    │                    │
+│ title_t03.mkv │ matched │ 1.00 │ S02E02  │ Blood Money                  │    0 │      2 │ 00:08:56 │ S02E03    │                    │
+│ title_t04.mkv │ skipped │    - │ -       │ -                            │    - │      - │        - │ -         │ skipped: too_short │
+└───────────────┴─────────┴──────┴─────────┴──────────────────────────────┴──────┴────────┴──────────┴───────────┴────────────────────┘
 11 stills across 4 episodes
 matched=4 ambiguous=0 unmatched=0 skipped=1 in 0.5s
 ```
 
 Columns with nothing to report are dropped, so a clean run stays narrow.
+
+`Conf` is a triage aid rather than a probability: it is the weaker of two
+margins — how far below the accept threshold the hit landed, and how decisively
+it beat the runner-up. A result is only as trustworthy as its weakest margin.
+`Dist` is the raw pHash Hamming distance out of 64 bits, and `Stills` is how
+many of that episode's stills independently agreed.
 
 Every match reports the still that identified it and the timestamp where that
 still was found, so verifying the answer means jumping to one second of video

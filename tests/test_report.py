@@ -17,6 +17,7 @@ from mkv_episode_matcher.models import (
     VideoFile,
 )
 from mkv_episode_matcher.report import (
+    TABLE_COLUMNS,
     build_payload,
     export_previews,
     render_table,
@@ -51,6 +52,11 @@ def matched_result(**overrides) -> MatchResult:
     }
     defaults.update(overrides)
     return MatchResult(**defaults)
+
+
+def row_by_column(result: MatchResult) -> dict[str, str]:
+    """Return one report row keyed by column heading, not by fragile position."""
+    return dict(zip(TABLE_COLUMNS, table_rows([result])[0], strict=True))
 
 
 class TestPayload:
@@ -139,32 +145,34 @@ class TestTable:
         assert table.row_count == 2
 
     def test_shows_the_timestamp_and_episode(self):
-        row = table_rows([matched_result()])[0]
+        row = row_by_column(matched_result())
 
-        assert row[0] == "title_t00.mkv"
-        assert row[2] == "S02E01"
-        assert row[6] == "00:10:12"
+        assert row["File"] == "title_t00.mkv"
+        assert row["Episode"] == "S02E01"
+        assert row["Found at"] == "00:10:12"
 
     def test_shows_why_a_result_is_ambiguous(self):
         result = MatchResult(
             video=video(), status=MatchStatus.AMBIGUOUS, notes=["too close to call"]
         )
 
-        assert table_rows([result])[0][-1] == "too close to call"
+        assert row_by_column(result)["Notes"] == "too close to call"
+
+    def test_shows_the_confidence_of_a_match(self):
+        assert row_by_column(matched_result(confidence=0.875))["Conf"] == "0.88"
 
     def test_placeholders_stand_in_for_missing_values(self):
-        row = table_rows([MatchResult(video=video(), status=MatchStatus.UNMATCHED)])[0]
+        row = row_by_column(MatchResult(video=video(), status=MatchStatus.UNMATCHED))
 
-        assert row[2] == "-"
-        assert row[6] == "-"
+        assert row["Episode"] == "-"
+        assert row["Found at"] == "-"
+        assert row["Conf"] == "-"
 
     def test_handles_an_empty_result_set(self):
         assert render_table([]).row_count == 0
         assert table_rows([]) == []
 
     def test_every_row_has_one_cell_per_column(self):
-        from mkv_episode_matcher.report import TABLE_COLUMNS
-
         rows = table_rows(
             [matched_result(), MatchResult(video=video("b.mkv"), status=MatchStatus.SKIPPED)]
         )
