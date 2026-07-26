@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import io
 import json
 import logging
 import shutil
@@ -22,6 +23,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 from .models import VideoFile
 from .normalize import hamming_distances, hash_array
@@ -35,6 +37,7 @@ __all__ = [
     "IndexParams",
     "build_indexes",
     "extract_frame_hashes",
+    "grab_frame",
 ]
 
 logger = logging.getLogger(__name__)
@@ -341,6 +344,56 @@ def extract_frame_hashes(
         np.asarray(phashes, dtype=np.uint64),
         np.asarray(dhashes, dtype=np.uint64),
     )
+
+
+def grab_frame(path: Path, timestamp_s: float) -> Image.Image:
+    """Decode the single frame of ``path`` nearest to ``timestamp_s``.
+
+    Used for previews and spot-checks, where one frame is wanted at full
+    quality rather than a whole index.
+
+    Parameters
+    ----------
+    path
+        Video file to read.
+    timestamp_s
+        Position in seconds.
+
+    Returns
+    -------
+    PIL.Image.Image
+        The decoded frame.
+
+    Raises
+    ------
+    FrameExtractionError
+        If ``ffmpeg`` produced no frame at that position.
+    """
+    command = [
+        require_ffmpeg(),
+        "-hide_banner",
+        "-nostdin",
+        "-v",
+        "error",
+        "-ss",
+        f"{max(0.0, timestamp_s):.3f}",
+        "-i",
+        str(path),
+        "-frames:v",
+        "1",
+        "-f",
+        "image2",
+        "-c:v",
+        "png",
+        "pipe:1",
+    ]
+    completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        command, capture_output=True, stdin=subprocess.DEVNULL, check=False
+    )
+    if completed.returncode != 0 or not completed.stdout:
+        detail = completed.stderr.decode(errors="replace").strip()
+        raise FrameExtractionError(f"could not grab {path} at {timestamp_s:.1f}s: {detail}")
+    return Image.open(io.BytesIO(completed.stdout))
 
 
 class FrameIndexCache:
