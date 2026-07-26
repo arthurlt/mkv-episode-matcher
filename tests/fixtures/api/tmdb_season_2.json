@@ -1,0 +1,44 @@
+{
+  "_id": "52573f4f760ee36611000a1b",
+  "id": 3624,
+  "name": "Season 2",
+  "season_number": 2,
+  "episodes": [
+    {
+      "id": 63056,
+      "episode_number": 1,
+      "season_number": 2,
+      "name": "Chipped Beef",
+      "overview": "The precinct copes with a budget freeze.",
+      "runtime": 48,
+      "still_path": "/s02e01-a.jpg"
+    },
+    {
+      "id": 63057,
+      "episode_number": 2,
+      "season_number": 2,
+      "name": "Blood Money",
+      "overview": "An informant disappears.",
+      "runtime": 48,
+      "still_path": "/s02e02-a.jpg"
+    },
+    {
+      "id": 63058,
+      "episode_number": 3,
+      "season_number": 2,
+      "name": "The Second Oldest Profession",
+      "overview": "A sting operation goes sideways.",
+      "runtime": 48,
+      "still_path": "/s02e03-a.jpg"
+    },
+    {
+      "id": 63059,
+      "episode_number": 4,
+      "season_number": 2,
+      "name": "Rites of Spring",
+      "overview": "Nobody photographed this one.",
+      "runtime": 48,
+      "still_path": null
+    }
+  ]
+}

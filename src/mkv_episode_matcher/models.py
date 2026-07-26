@@ -8,6 +8,7 @@ from enum import StrEnum
 from pathlib import Path
 
 __all__ = [
+    "dedupe_stills",
     "Episode",
     "EpisodeScore",
     "FileScores",
@@ -102,6 +103,29 @@ class Still:
         """Return the on-disk cache file name for this still."""
         suffix = Path(self.url.split("?")[0]).suffix.lower() or ".jpg"
         return f"{self.provider}-{self.cache_key}{suffix}"
+
+
+def dedupe_stills(stills: tuple[Still, ...]) -> tuple[Still, ...]:
+    """Drop repeated still URLs while preserving order.
+
+    Providers list the same image from more than one endpoint, and hashing a
+    duplicate would inflate the multi-still agreement count with no new
+    evidence behind it.
+
+    Examples
+    --------
+    >>> one = Still("tmdb", "https://img/a.jpg")
+    >>> len(dedupe_stills((one, one, Still("tmdb", "https://img/b.jpg"))))
+    2
+    """
+    seen: set[str] = set()
+    unique: list[Still] = []
+    for still in stills:
+        if still.url in seen:
+            continue
+        seen.add(still.url)
+        unique.append(still)
+    return tuple(unique)
 
 
 @dataclass(frozen=True, slots=True)

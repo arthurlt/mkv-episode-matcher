@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import json
 import shutil
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
+import httpx
 import numpy as np
 import pytest
 from PIL import Image
@@ -90,6 +92,96 @@ class ApiFixtureLoader:
     def load(self, name: str) -> dict:
         """Return the parsed JSON fixture called ``name`` (without extension)."""
         return json.loads((self.root / f"{name}.json").read_text())
+
+
+class RecordedProviderApi:
+    """An ``httpx`` transport replaying recorded TMDB/TheTVDB responses.
+
+    Real ``httpx`` request building, redirects, and error handling still run;
+    only the socket is replaced. Every request is recorded so tests can assert
+    that the disk caches actually prevented repeat calls.
+    """
+
+    def __init__(self, root: Path = API_FIXTURE_ROOT) -> None:
+        self.root = root
+        self.requests: list[httpx.Request] = []
+        self.image_bytes: dict[str, bytes] = {}
+        self.default_image = _tiny_jpeg()
+
+    @property
+    def transport(self) -> httpx.MockTransport:
+        """Return a transport that can be handed to :class:`httpx.Client`."""
+        return httpx.MockTransport(self.handle)
+
+    def client(self) -> httpx.Client:
+        """Return an ``httpx`` client wired to this recorded API."""
+        return httpx.Client(transport=self.transport)
+
+    def paths_called(self, needle: str) -> int:
+        """Return how many recorded requests contain ``needle`` in their URL."""
+        return sum(1 for request in self.requests if needle in str(request.url))
+
+    def _json(self, name: str) -> httpx.Response:
+        path = self.root / f"{name}.json"
+        if not path.exists():
+            return httpx.Response(404, json={"status": "failure", "message": "not found"})
+        return httpx.Response(200, json=json.loads(path.read_text()))
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        """Route a request to a recorded fixture."""
+        self.requests.append(request)
+        host, path = request.url.host, request.url.path
+
+        if host == "api.themoviedb.org":
+            return self._handle_tmdb(path)
+        if host == "api4.thetvdb.com":
+            return self._handle_tvdb(path)
+        if host in {"image.tmdb.org", "artworks.thetvdb.com"}:
+            key = str(request.url)
+            return httpx.Response(200, content=self.image_bytes.get(key, self.default_image))
+        return httpx.Response(404, json={"message": f"unrouted host {host}"})
+
+    def _handle_tmdb(self, path: str) -> httpx.Response:
+        parts = path.strip("/").split("/")
+        if parts[:2] == ["3", "search"]:
+            return self._json("tmdb_search")
+        if len(parts) == 8 and parts[3] == "season" and parts[7] == "images":
+            return self._json(f"tmdb_images_s{int(parts[4]):02d}e{int(parts[6]):02d}")
+        if len(parts) == 5 and parts[3] == "season":
+            return self._json(f"tmdb_season_{int(parts[4])}")
+        return httpx.Response(404, json={"status_message": f"unrouted tmdb path {path}"})
+
+    def _handle_tvdb(self, path: str) -> httpx.Response:
+        parts = path.strip("/").split("/")
+        if parts[-1] == "login":
+            return self._json("tvdb_login")
+        if parts[1] == "search":
+            return self._json("tvdb_search")
+        if parts[1] == "series" and "episodes" in parts:
+            return self._json("tvdb_episodes_s2")
+        if parts[1] == "episodes" and parts[-1] == "extended":
+            return self._json(f"tvdb_episode_extended_{parts[2]}")
+        return httpx.Response(404, json={"status": "failure", "message": f"unrouted {path}"})
+
+
+def _tiny_jpeg() -> bytes:
+    """Return the bytes of a small valid JPEG, used as a stand-in still."""
+    buffer = io.BytesIO()
+    Image.fromarray(make_pattern(1, 128, 72)).save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
+def still_bytes(seed: int, width: int = 320, height: int = 180) -> bytes:
+    """Return JPEG bytes of the deterministic pattern for ``seed``."""
+    buffer = io.BytesIO()
+    Image.fromarray(make_pattern(seed, width, height)).save(buffer, format="JPEG", quality=85)
+    return buffer.getvalue()
+
+
+@pytest.fixture
+def recorded_api() -> RecordedProviderApi:
+    """Return a recorded TMDB/TheTVDB API backed by JSON fixtures."""
+    return RecordedProviderApi()
 
 
 def encode_video(

@@ -1,0 +1,19 @@
+{
+  "id": 63058,
+  "stills": [
+    {
+      "aspect_ratio": 1.778,
+      "file_path": "/s02e03-a.jpg",
+      "height": 1080,
+      "width": 1920,
+      "vote_average": 5.0
+    },
+    {
+      "aspect_ratio": 1.778,
+      "file_path": "/s02e03-b.jpg",
+      "height": 1080,
+      "width": 1920,
+      "vote_average": 4.4
+    }
+  ]
+}

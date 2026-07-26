@@ -1,0 +1,26 @@
+{
+  "id": 63056,
+  "stills": [
+    {
+      "aspect_ratio": 1.778,
+      "file_path": "/s02e01-a.jpg",
+      "height": 1080,
+      "width": 1920,
+      "vote_average": 5.3
+    },
+    {
+      "aspect_ratio": 1.778,
+      "file_path": "/s02e01-b.jpg",
+      "height": 720,
+      "width": 1280,
+      "vote_average": 5.1
+    },
+    {
+      "aspect_ratio": 1.778,
+      "file_path": "/s02e01-c.jpg",
+      "height": 720,
+      "width": 1280,
+      "vote_average": 4.9
+    }
+  ]
+}

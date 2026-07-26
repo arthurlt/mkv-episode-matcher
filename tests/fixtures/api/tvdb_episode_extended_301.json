@@ -1,0 +1,28 @@
+{
+  "status": "success",
+  "data": {
+    "id": 301,
+    "name": "Chipped Beef",
+    "seasonNumber": 2,
+    "number": 1,
+    "image": "/banners/episodes/70328/301.jpg",
+    "artworks": [
+      {
+        "id": 9001,
+        "image": "/banners/episodes/70328/301-2.jpg",
+        "thumbnail": "/banners/episodes/70328/301-2_t.jpg",
+        "type": 12,
+        "width": 640,
+        "height": 360
+      },
+      {
+        "id": 9002,
+        "image": "/banners/series/70328/posters/promo.jpg",
+        "thumbnail": "/banners/series/70328/posters/promo_t.jpg",
+        "type": 2,
+        "width": 680,
+        "height": 1000
+      }
+    ]
+  }
+}

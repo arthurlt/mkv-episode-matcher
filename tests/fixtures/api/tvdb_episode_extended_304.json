@@ -1,0 +1,20 @@
+{
+  "status": "success",
+  "data": {
+    "id": 304,
+    "name": "Rites of Spring",
+    "seasonNumber": 2,
+    "number": 4,
+    "image": "/banners/episodes/70328/304.jpg",
+    "artworks": [
+      {
+        "id": 9004,
+        "image": "/banners/episodes/70328/304-2.jpg",
+        "thumbnail": "/banners/episodes/70328/304-2_t.jpg",
+        "type": 12,
+        "width": 640,
+        "height": 360
+      }
+    ]
+  }
+}
