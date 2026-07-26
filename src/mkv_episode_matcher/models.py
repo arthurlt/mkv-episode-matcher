@@ -8,7 +8,6 @@ from enum import StrEnum
 from pathlib import Path
 
 __all__ = [
-    "dedupe_stills",
     "Episode",
     "EpisodeScore",
     "FileScores",
@@ -19,6 +18,7 @@ __all__ = [
     "StillHit",
     "StillKind",
     "VideoFile",
+    "dedupe_stills",
 ]
 
 

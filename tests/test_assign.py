@@ -133,9 +133,7 @@ class TestSolveAssignment:
     @given(
         st.lists(
             st.lists(
-                st.one_of(
-                    st.floats(min_value=0, max_value=30, allow_nan=False), st.just(INF)
-                ),
+                st.one_of(st.floats(min_value=0, max_value=30, allow_nan=False), st.just(INF)),
                 min_size=1,
                 max_size=4,
             ),
@@ -304,13 +302,14 @@ class TestAssign:
     def test_multi_still_agreement_breaks_a_tie(self):
         """Same raw distance, but one episode has several stills agreeing."""
         weak = scores_for("a.mkv", {1: 8.0})
-        strong_scores = list(weak.scores) + [
+        strong_scores = [
+            *weak.scores,
             EpisodeScore(
                 episode=episode(2),
                 best_hit=StillHit(Still("tmdb", "https://img/2.jpg"), 8, 120.0, 2),
                 supporting_stills=4,
                 cost=8.0 - 2.25,
-            )
+            ),
         ]
         scored = [FileScores(video=video("a.mkv"), scores=tuple(strong_scores))]
 

@@ -113,9 +113,7 @@ class TestTmdbClient:
         assert "api_key" not in str(request.url)
 
     def test_a_missing_season_raises_a_provider_error(self, recorded_api, cache_dir):
-        client = TmdbClient(
-            api_key="k", client=recorded_api.client(), cache=JsonCache(cache_dir)
-        )
+        client = TmdbClient(api_key="k", client=recorded_api.client(), cache=JsonCache(cache_dir))
 
         with pytest.raises(ProviderError):
             client.season_episodes("4224", 99)
@@ -226,25 +224,33 @@ class TestRetries:
 
 class TestCollectSeason:
     def test_merges_stills_from_both_providers(self, tmdb, tvdb):
-        episodes = collect_season(season=2, tmdb=tmdb, tvdb=tvdb, tmdb_series="4224", tvdb_series="70328")
+        episodes = collect_season(
+            season=2, tmdb=tmdb, tvdb=tvdb, tmdb_series="4224", tvdb_series="70328"
+        )
 
         first = next(e for e in episodes if e.number == 1)
         providers = {still.provider for still in first.stills}
         assert providers == {"tmdb", "tvdb"}
 
     def test_episode_numbers_are_unique_and_sorted(self, tmdb, tvdb):
-        episodes = collect_season(season=2, tmdb=tmdb, tvdb=tvdb, tmdb_series="4224", tvdb_series="70328")
+        episodes = collect_season(
+            season=2, tmdb=tmdb, tvdb=tvdb, tmdb_series="4224", tvdb_series="70328"
+        )
 
         numbers = [episode.number for episode in episodes]
         assert numbers == sorted(numbers) == [1, 2, 3, 4]
 
     def test_titles_prefer_tmdb(self, tmdb, tvdb):
-        episodes = collect_season(season=2, tmdb=tmdb, tvdb=tvdb, tmdb_series="4224", tvdb_series="70328")
+        episodes = collect_season(
+            season=2, tmdb=tmdb, tvdb=tvdb, tmdb_series="4224", tvdb_series="70328"
+        )
 
         assert episodes[0].title == "Chipped Beef"
 
     def test_records_which_providers_contributed(self, tmdb, tvdb):
-        episodes = collect_season(season=2, tmdb=tmdb, tvdb=tvdb, tmdb_series="4224", tvdb_series="70328")
+        episodes = collect_season(
+            season=2, tmdb=tmdb, tvdb=tvdb, tmdb_series="4224", tvdb_series="70328"
+        )
 
         assert set(episodes[0].providers) == {"tmdb", "tvdb"}
 
@@ -274,7 +280,9 @@ class TestCollectSeason:
         assert "tvdb" in caplog.text.lower()
 
     def test_coverage_summary_flags_episodes_without_stills(self, tmdb, tvdb):
-        episodes = collect_season(season=2, tmdb=tmdb, tvdb=tvdb, tmdb_series="4224", tvdb_series="70328")
+        episodes = collect_season(
+            season=2, tmdb=tmdb, tvdb=tvdb, tmdb_series="4224", tvdb_series="70328"
+        )
 
         coverage = describe_still_coverage(episodes)
 

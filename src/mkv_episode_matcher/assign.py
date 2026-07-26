@@ -217,9 +217,7 @@ def _assign_scored(scored: Sequence[FileScores], config: ScoringConfig) -> list[
 
     results = []
     for row, file_scores in enumerate(scored):
-        results.append(
-            _verdict(file_scores, cost_matrix, row, assignment[row], episodes, config)
-        )
+        results.append(_verdict(file_scores, cost_matrix, row, assignment[row], episodes, config))
     return results
 
 
@@ -272,8 +270,9 @@ def _verdict(
     ranked = sorted(ordered, key=lambda score: (score.cost, score.episode.number))
     best = ranked[0] if ranked else None
     runner_up = ranked[1] if len(ranked) > 1 else None
+    best_hit = best.best_hit if best else None
 
-    if best is None or not _feasible(best, config):
+    if best is None or best_hit is None or not _feasible(best, config):
         return MatchResult(
             video=video,
             status=MatchStatus.UNMATCHED,
@@ -291,15 +290,15 @@ def _verdict(
             "matched %s -> %s (distance %d at %.1fs, %d supporting stills)",
             video.name,
             best.episode.code,
-            best.best_hit.distance,
-            best.best_hit.timestamp,
+            best_hit.distance,
+            best_hit.timestamp,
             best.supporting_stills,
         )
         return MatchResult(
             video=video,
             status=MatchStatus.MATCHED,
             episode=best.episode,
-            hit=best.best_hit,
+            hit=best_hit,
             cost=best.cost,
             runner_up=runner_up.episode if runner_up else None,
             runner_up_cost=None if runner_up is None or runner_up.cost == INF else runner_up.cost,
@@ -325,7 +324,7 @@ def _verdict(
         video=video,
         status=MatchStatus.AMBIGUOUS,
         episode=None,
-        hit=best.best_hit,
+        hit=best_hit,
         cost=best.cost,
         runner_up=runner_up.episode if runner_up else best.episode,
         runner_up_cost=None if runner_up is None or runner_up.cost == INF else runner_up.cost,

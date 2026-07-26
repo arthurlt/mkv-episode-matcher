@@ -23,9 +23,7 @@ def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
 
 
-requires_ffmpeg = pytest.mark.skipif(
-    not ffmpeg_available(), reason="ffmpeg/ffprobe not installed"
-)
+requires_ffmpeg = pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg/ffprobe not installed")
 
 
 def make_pattern(seed: int, width: int = 320, height: int = 180) -> np.ndarray:
@@ -78,7 +76,7 @@ def cache_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def api_fixture() -> "ApiFixtureLoader":
+def api_fixture() -> ApiFixtureLoader:
     """Return a loader for recorded provider API responses."""
     return ApiFixtureLoader(API_FIXTURE_ROOT)
 
@@ -256,8 +254,6 @@ def video_factory(tmp_path: Path) -> Iterator[object]:
         target_dir = directory or tmp_path
         target_dir.mkdir(parents=True, exist_ok=True)
         frames = [make_pattern(seed) for seed in seeds]
-        return encode_video(
-            target_dir / name, frames, seconds_per_frame=seconds_per_frame
-        )
+        return encode_video(target_dir / name, frames, seconds_per_frame=seconds_per_frame)
 
-    yield factory
+    return factory

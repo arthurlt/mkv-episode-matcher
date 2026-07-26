@@ -12,7 +12,9 @@ __all__ = ["configure_logging"]
 _LEVELS = [logging.WARNING, logging.INFO, logging.DEBUG]
 
 
-def configure_logging(verbosity: int = 0, *, quiet: bool = False, console: Console | None = None) -> int:
+def configure_logging(
+    verbosity: int = 0, *, quiet: bool = False, console: Console | None = None
+) -> int:
     """Install a Rich log handler and return the level that was selected.
 
     Parameters

@@ -289,7 +289,9 @@ class TestBuildAgainstRealVideos:
 
         assert index.timestamps[0] == pytest.approx(3.0, abs=0.2)
 
-    def test_build_indexes_handles_several_files_in_parallel(self, video_factory, cache_dir, tmp_path):
+    def test_build_indexes_handles_several_files_in_parallel(
+        self, video_factory, cache_dir, tmp_path
+    ):
         video_factory("a.mkv", [1, 2, 3, 4])
         video_factory("b.mkv", [5, 6, 7, 8])
         videos = [probe_video(p) for p in sorted(tmp_path.glob("*.mkv"))]
@@ -304,17 +306,13 @@ class TestBuildAgainstRealVideos:
         path = video_factory("clip.mkv", [71, 72, 73, 74, 75, 76], seconds_per_frame=2.0)
         indexer = FrameIndexer(FrameIndexCache(cache_dir), IndexParams(interval_s=4.0))
 
-        window = indexer.extract_window(
-            probe_video(path), start_s=4.0, end_s=8.0, interval_s=0.5
-        )
+        window = indexer.extract_window(probe_video(path), start_s=4.0, end_s=8.0, interval_s=0.5)
 
         assert len(window) >= 4
         assert float(window.timestamps.min()) >= 3.9
         assert float(window.timestamps.max()) <= 8.6
 
-    def test_refinement_finds_a_frame_the_coarse_pass_stepped_over(
-        self, video_factory, cache_dir
-    ):
+    def test_refinement_finds_a_frame_the_coarse_pass_stepped_over(self, video_factory, cache_dir):
         """The point of two-stage mode: a still between coarse samples is recoverable."""
         seeds = list(range(700, 716))
         path = video_factory("clip.mkv", seeds, seconds_per_frame=0.5)

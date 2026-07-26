@@ -29,7 +29,7 @@ class TestJsonCache:
         cache.put("../../escape", {"a": 1})
 
         assert cache.get("../../escape") == {"a": 1}
-        assert list(cache_dir.rglob("*.json"))[0].is_relative_to(cache_dir)
+        assert next(iter(cache_dir.rglob("*.json"))).is_relative_to(cache_dir)
 
     def test_corrupt_entry_is_treated_as_a_miss(self, cache_dir):
         cache = JsonCache(cache_dir)
@@ -109,12 +109,16 @@ class TestImageCache:
         assert list(cache_dir.rglob("*.jpg")) == []
 
     def test_an_empty_response_is_not_cached(self, cache_dir):
-        client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b"")))
+        client = httpx.Client(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b""))
+        )
 
         assert ImageCache(cache_dir).fetch(client, self.still()) is None
 
     def test_distinct_urls_get_distinct_files(self, cache_dir):
-        client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b"x")))
+        client = httpx.Client(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b"x"))
+        )
         cache = ImageCache(cache_dir)
 
         first = cache.fetch(client, self.still("https://img/a.jpg"))

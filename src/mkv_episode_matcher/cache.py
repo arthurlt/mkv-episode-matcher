@@ -69,7 +69,9 @@ class CacheRoot:
 class JsonCache:
     """A flat key/value cache of JSON documents with an optional TTL."""
 
-    def __init__(self, directory: Path, *, ttl_s: float | None = None, enabled: bool = True) -> None:
+    def __init__(
+        self, directory: Path, *, ttl_s: float | None = None, enabled: bool = True
+    ) -> None:
         self.directory = Path(directory)
         self.ttl_s = ttl_s
         self.enabled = enabled
@@ -162,7 +164,11 @@ class ImageCache:
         return path
 
     def fetch_many(
-        self, client: httpx.Client, stills: Sequence[Still] | Iterable[Still], *, max_workers: int = 8
+        self,
+        client: httpx.Client,
+        stills: Sequence[Still] | Iterable[Still],
+        *,
+        max_workers: int = 8,
     ) -> dict[str, Path]:
         """Download several stills concurrently, keyed by URL.
 
@@ -173,9 +179,7 @@ class ImageCache:
             return {}
         results: dict[str, Path] = {}
         with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(unique)))) as pool:
-            futures = {
-                pool.submit(self.fetch, client, still): url for url, still in unique.items()
-            }
+            futures = {pool.submit(self.fetch, client, still): url for url, still in unique.items()}
             for future, url in futures.items():
                 path = future.result()
                 if path is not None:

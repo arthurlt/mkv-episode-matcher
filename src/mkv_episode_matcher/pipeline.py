@@ -152,9 +152,7 @@ def run_match(
 
     scored = score_all(candidates, indexes, episodes, still_hashes, request.scoring)
     if request.refine:
-        scored = [
-            _refine(file_scores, indexer, episodes, still_hashes, request) for file_scores in scored
-        ]
+        scored = [_refine(file_scores, indexer, still_hashes, request) for file_scores in scored]
 
     results = assign(scored, config=request.scoring, skipped=skipped, unindexed=unindexed)
     elapsed = time.monotonic() - started
@@ -172,7 +170,6 @@ def run_match(
 def _refine(
     file_scores: FileScores,
     indexer: FrameIndexer,
-    episodes: list[Episode],
     still_hashes: dict[str, ImageHashes],
     request: MatchRequest,
 ) -> FileScores:
@@ -182,14 +179,15 @@ def _refine(
     two coarse samples can look much worse than it is. Re-decoding a few
     seconds around each promising hit costs little and recovers those.
     """
-    leaders = [score for score in file_scores.ranked()[:2] if score.best_hit is not None]
+    leaders = [
+        (score, score.best_hit) for score in file_scores.ranked()[:2] if score.best_hit is not None
+    ]
     if not leaders:
         return file_scores
 
     video = file_scores.video
     improved = {}
-    for score in leaders:
-        hit = score.best_hit
+    for score, hit in leaders:
         window = indexer.extract_window(
             video,
             start_s=hit.timestamp - request.refine_window_s,
@@ -213,7 +211,5 @@ def _refine(
         return file_scores
     return replace(
         file_scores,
-        scores=tuple(
-            improved.get(score.episode.number, score) for score in file_scores.scores
-        ),
+        scores=tuple(improved.get(score.episode.number, score) for score in file_scores.scores),
     )

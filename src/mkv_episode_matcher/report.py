@@ -149,16 +149,44 @@ def table_rows(results: Sequence[MatchResult]) -> list[tuple[str, ...]]:
     return rows
 
 
+#: Columns dropped entirely when no row has anything to say in them, which
+#: keeps the table readable in a narrow terminal.
+_OPTIONAL_COLUMNS = frozenset({"Title", "Stills", "Runner-up", "Notes"})
+_EMPTY_CELLS = frozenset({"", "-"})
+
+
+def informative_columns(rows: Sequence[tuple[str, ...]]) -> list[int]:
+    """Return the indices of the columns worth printing for ``rows``.
+
+    Examples
+    --------
+    >>> len(informative_columns([]))
+    5
+    """
+    keep = []
+    for index, heading in enumerate(TABLE_COLUMNS):
+        populated = any(row[index] not in _EMPTY_CELLS for row in rows)
+        if heading not in _OPTIONAL_COLUMNS or populated:
+            keep.append(index)
+    return keep
+
+
 def render_table(results: Sequence[MatchResult]) -> Table:
     """Build the console table summarising a run."""
+    rows = table_rows(results)
+    columns = informative_columns(rows)
+
     table = Table(title="MKV episode matches", show_lines=False, expand=False)
-    for heading in TABLE_COLUMNS:
+    for index in columns:
+        heading = TABLE_COLUMNS[index]
         justify = "right" if heading in {"Dist", "Stills", "Found at"} else "left"
         table.add_column(heading, overflow="fold", justify=justify)
 
-    for result, row in zip(results, table_rows(results), strict=True):
+    for result, row in zip(results, rows, strict=True):
         style = _STATUS_STYLE[result.status]
-        table.add_row(row[0], f"[{style}]{row[1]}[/{style}]", *row[2:])
+        styled = list(row)
+        styled[1] = f"[{style}]{row[1]}[/{style}]"
+        table.add_row(*(styled[index] for index in columns))
     return table
 
 
@@ -222,12 +250,12 @@ def _compose(left: Image.Image, right: Image.Image, height: int) -> Image.Image:
     """Place two images side by side at a common height, separated by a gutter."""
     gutter = 8
     scaled = [
-        image.resize((max(1, round(image.width * height / image.height)), height), Image.LANCZOS)
+        image.resize(
+            (max(1, round(image.width * height / image.height)), height), Image.Resampling.LANCZOS
+        )
         for image in (left, right)
     ]
-    canvas = Image.new(
-        "RGB", (sum(image.width for image in scaled) + gutter, height), (16, 16, 16)
-    )
+    canvas = Image.new("RGB", (sum(image.width for image in scaled) + gutter, height), (16, 16, 16))
     canvas.paste(scaled[0], (0, 0))
     canvas.paste(scaled[1], (scaled[0].width + gutter, 0))
     return canvas

@@ -243,21 +243,22 @@ def _passthrough_flag() -> tuple[str, str]:
     duplicating frames, which would silently corrupt the index.
     """
     try:
-        banner = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        banner = subprocess.run(
             [require_ffmpeg(), "-version"], capture_output=True, text=True, check=False
         ).stdout
-        major = int(re.search(r"ffmpeg version n?(\d+)", banner).group(1))
-    except (AttributeError, ValueError, OSError):
-        major = 0
+    except OSError:
+        return "-vsync", "0"
+    found = re.search(r"ffmpeg version n?(\d+)", banner)
+    major = int(found.group(1)) if found else 0
     return ("-fps_mode", "passthrough") if major >= 5 else ("-vsync", "0")
 
 
 def parse_showinfo_timestamps(text: str) -> list[float]:
-    """Extract frame presentation times, in order, from ``showinfo`` output.
+    r"""Extract frame presentation times, in order, from ``showinfo`` output.
 
     Examples
     --------
-    >>> parse_showinfo_timestamps("n:0 pts:0 pts_time:0 x\\nn:1 pts:3000 pts_time:3.5 y")
+    >>> parse_showinfo_timestamps("n:0 pts_time:0 x\nn:1 pts_time:3.5 y")
     [0.0, 3.5]
     >>> parse_showinfo_timestamps("no frames here")
     []
@@ -307,9 +308,7 @@ class FrameStream:
     def command(self) -> list[str]:
         """Return the ``ffmpeg`` argv used to sample this file."""
         width, height = self.size
-        select = (
-            f"select=isnan(prev_selected_t)+gte(t-prev_selected_t\\,{self.interval_s:.6f})"
-        )
+        select = f"select=isnan(prev_selected_t)+gte(t-prev_selected_t\\,{self.interval_s:.6f})"
         command = [require_ffmpeg(), "-hide_banner", "-nostdin", "-v", "info"]
         if self.start_s > 0:
             command += ["-ss", f"{self.start_s:.3f}"]
@@ -339,7 +338,7 @@ class FrameStream:
         logger.debug("extracting frames: %s", " ".join(command))
 
         with tempfile.TemporaryFile() as error_sink:
-            process = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+            process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
                 stderr=error_sink,
@@ -363,9 +362,7 @@ class FrameStream:
 
             if returncode != 0:
                 raise FrameExtractionError(f"ffmpeg failed for {self.path}: {log.strip()}")
-            self.timestamps = [
-                self.start_s + value for value in parse_showinfo_timestamps(log)
-            ]
+            self.timestamps = [self.start_s + value for value in parse_showinfo_timestamps(log)]
 
 
 def extract_frame_hashes(
@@ -452,9 +449,7 @@ def grab_frame(path: Path, timestamp_s: float) -> Image.Image:
         "png",
         "pipe:1",
     ]
-    completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
-        command, capture_output=True, stdin=subprocess.DEVNULL, check=False
-    )
+    completed = subprocess.run(command, capture_output=True, stdin=subprocess.DEVNULL, check=False)
     if completed.returncode != 0 or not completed.stdout:
         detail = completed.stderr.decode(errors="replace").strip()
         raise FrameExtractionError(f"could not grab {path} at {timestamp_s:.1f}s: {detail}")
@@ -616,9 +611,7 @@ def build_indexes(
 
     indexes: dict[Path, FrameIndex] = {}
     with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(videos)))) as pool:
-        futures = {
-            pool.submit(indexer.get, video, refresh=refresh): video for video in videos
-        }
+        futures = {pool.submit(indexer.get, video, refresh=refresh): video for video in videos}
         for future, video in futures.items():
             try:
                 indexes[video.path] = future.result()

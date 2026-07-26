@@ -69,9 +69,7 @@ def find_mkv_files(directory: Path) -> list[Path]:
     if not directory.is_dir():
         raise NotADirectoryError(f"{directory} is not a directory")
     return sorted(
-        path
-        for path in directory.iterdir()
-        if path.is_file() and path.suffix.lower() == ".mkv"
+        path for path in directory.iterdir() if path.is_file() and path.suffix.lower() == ".mkv"
     )
 
 
@@ -104,7 +102,7 @@ def probe_duration(path: Path) -> float:
         str(path),
     ]
     logger.debug("probing duration: %s", " ".join(command))
-    completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+    completed = subprocess.run(
         command, capture_output=True, text=True, timeout=_PROBE_TIMEOUT_S, check=False
     )
     if completed.returncode != 0:
@@ -144,7 +142,7 @@ def probe_dimensions(path: Path) -> tuple[int, int]:
         "json",
         str(path),
     ]
-    completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+    completed = subprocess.run(
         command, capture_output=True, text=True, timeout=_PROBE_TIMEOUT_S, check=False
     )
     if completed.returncode != 0:

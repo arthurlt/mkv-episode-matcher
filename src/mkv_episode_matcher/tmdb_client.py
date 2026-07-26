@@ -14,7 +14,7 @@ import httpx
 
 from .cache import JsonCache
 from .models import Episode, Still, StillKind, dedupe_stills
-from .providers import JsonApiClient, ProviderError, SeriesMatch, choose_series
+from .providers import JsonApiClient, ProviderError, QueryParams, SeriesMatch, choose_series
 
 __all__ = ["TMDB_API_BASE", "TMDB_IMAGE_BASE", "TmdbClient"]
 
@@ -69,9 +69,9 @@ class TmdbClient(JsonApiClient):
         """
         return self.api_key.count(".") == 2
 
-    def _auth(self) -> tuple[dict[str, object], dict[str, str]]:
+    def _auth(self) -> tuple[QueryParams, dict[str, str]]:
         """Return the ``(params, headers)`` carrying credentials."""
-        params: dict[str, object] = {"language": self.language}
+        params: QueryParams = {"language": self.language}
         headers: dict[str, str] = {}
         if self.uses_bearer_token:
             headers["Authorization"] = f"Bearer {self.api_key}"
@@ -79,7 +79,7 @@ class TmdbClient(JsonApiClient):
             params["api_key"] = self.api_key
         return params, headers
 
-    def _get(self, path: str, *, extra: dict[str, object] | None = None, cache_key: str) -> dict:
+    def _get(self, path: str, *, extra: QueryParams | None = None, cache_key: str) -> dict:
         params, headers = self._auth()
         params.update(extra or {})
         return self.get_json(path, params=params, headers=headers, cache_key=cache_key)
@@ -105,9 +105,7 @@ class TmdbClient(JsonApiClient):
 
     def search_series(self, name: str) -> list[SeriesMatch]:
         """Return the series TMDB knows about under ``name``."""
-        payload = self._get(
-            "/search/tv", extra={"query": name}, cache_key=f"tmdb/search/{name}"
-        )
+        payload = self._get("/search/tv", extra={"query": name}, cache_key=f"tmdb/search/{name}")
         matches = []
         for result in payload.get("results", []):
             aired = str(result.get("first_air_date") or "")
@@ -199,4 +197,3 @@ class TmdbClient(JsonApiClient):
         for episode, stills in zip(episodes, extra, strict=True):
             merged.append(episode.with_stills(dedupe_stills(episode.stills + stills)))
         return merged
-

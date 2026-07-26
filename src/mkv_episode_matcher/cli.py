@@ -55,7 +55,7 @@ def build_http_client() -> httpx.Client:
 
 
 @app.command()
-def match(  # noqa: PLR0913 - a CLI surface is inherently wide
+def match(
     input_dir: Annotated[
         Path,
         typer.Argument(
@@ -77,7 +77,8 @@ def match(  # noqa: PLR0913 - a CLI surface is inherently wide
         str | None, typer.Option("--tmdb-id", help="Skip the TMDB search and use this series id.")
     ] = None,
     tvdb_id: Annotated[
-        str | None, typer.Option("--tvdb-id", help="Skip the TheTVDB search and use this series id.")
+        str | None,
+        typer.Option("--tvdb-id", help="Skip the TheTVDB search and use this series id."),
     ] = None,
     tmdb_key: Annotated[
         str | None, typer.Option(envvar="TMDB_API_KEY", help="TMDB v3 key or v4 token.")
@@ -110,7 +111,9 @@ def match(  # noqa: PLR0913 - a CLI surface is inherently wide
     ] = 0.0,
     min_minutes: Annotated[
         float,
-        typer.Option("--min-minutes", min=0.0, help="Skip files shorter than this (menus, trailers)."),
+        typer.Option(
+            "--min-minutes", min=0.0, help="Skip files shorter than this (menus, trailers)."
+        ),
     ] = DEFAULT_MIN_DURATION_S / 60,
     max_minutes: Annotated[
         float | None,
@@ -234,9 +237,7 @@ def match(  # noqa: PLR0913 - a CLI surface is inherently wide
         _rename(run, console=console, series=series, force=force)
 
     if strict and run.unresolved:
-        console.print(
-            f"[yellow]{len(run.unresolved)} file(s) still need a human.[/yellow]"
-        )
+        console.print(f"[yellow]{len(run.unresolved)} file(s) still need a human.[/yellow]")
         raise typer.Exit(code=EXIT_UNRESOLVED)
 
 
@@ -257,8 +258,7 @@ def _emit(
     for result in run.results:
         counts[result.status.value] += 1
     console.print(
-        " ".join(f"{name}={count}" for name, count in counts.items())
-        + f" in {run.elapsed_s:.1f}s"
+        " ".join(f"{name}={count}" for name, count in counts.items()) + f" in {run.elapsed_s:.1f}s"
     )
 
     if json_out is not None:
@@ -266,9 +266,7 @@ def _emit(
         console.print(f"JSON report: {json_out}")
 
     if previews is not None:
-        written = export_previews(
-            run.results, still_paths=run.still_paths, destination=previews
-        )
+        written = export_previews(run.results, still_paths=run.still_paths, destination=previews)
         console.print(f"Wrote {len(written)} preview image(s) to {previews}")
 
 

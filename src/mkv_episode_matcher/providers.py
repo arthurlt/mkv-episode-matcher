@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ from .cache import JsonCache
 __all__ = [
     "JsonApiClient",
     "ProviderError",
+    "QueryParams",
     "SeriesMatch",
     "SeriesNotFoundError",
     "normalize_title",
@@ -27,6 +29,9 @@ _BACKOFF_BASE_S = 0.5
 _MAX_BACKOFF_S = 8.0
 _RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
 _PUNCTUATION = re.compile(r"[^a-z0-9]+")
+
+#: Query string values the provider APIs accept.
+QueryParams = dict[str, str | int | float | None]
 
 
 class ProviderError(RuntimeError):
@@ -105,7 +110,9 @@ def choose_series(
 
     wanted = normalize_title(query)
 
-    partial = [candidate for candidate in pool if wanted and wanted in normalize_title(candidate.name)]
+    partial = [
+        candidate for candidate in pool if wanted and wanted in normalize_title(candidate.name)
+    ]
     if partial:
         return partial[0]
 
@@ -138,7 +145,7 @@ class JsonApiClient:
         self,
         path: str,
         *,
-        params: dict[str, object] | None = None,
+        params: QueryParams | None = None,
         headers: dict[str, str] | None = None,
         cache_key: str | None = None,
     ) -> dict:
@@ -159,7 +166,7 @@ class JsonApiClient:
         method: str,
         path: str,
         *,
-        params: dict[str, object] | None = None,
+        params: QueryParams | None = None,
         headers: dict[str, str] | None = None,
         json_body: dict[str, object] | None = None,
     ) -> dict:
@@ -217,10 +224,8 @@ class JsonApiClient:
         if response is not None:
             header = response.headers.get("retry-after")
             if header is not None:
-                try:
+                with contextlib.suppress(ValueError):
                     delay = float(header)
-                except ValueError:
-                    pass
         sleep(delay)
 
     def _parse(self, response: httpx.Response, url: str) -> dict:

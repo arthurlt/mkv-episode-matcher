@@ -244,9 +244,7 @@ def score_episode(
     )
     if best is not None and best.dhash_distance > config.dhash_threshold:
         cost += config.dhash_penalty
-    return EpisodeScore(
-        episode=episode, best_hit=best, supporting_stills=supporting, cost=cost
-    )
+    return EpisodeScore(episode=episode, best_hit=best, supporting_stills=supporting, cost=cost)
 
 
 def _search(index: FrameIndex, hashes: ImageHashes) -> tuple[int, int, float] | None:
@@ -255,9 +253,7 @@ def _search(index: FrameIndex, hashes: ImageHashes) -> tuple[int, int, float] | 
         return None
     distances = hamming_distances(hashes.phash, index.phashes)
     position = int(np.argmin(distances))
-    dhash_distance = int(
-        hamming_distances(hashes.dhash, index.dhashes[position : position + 1])[0]
-    )
+    dhash_distance = int(hamming_distances(hashes.dhash, index.dhashes[position : position + 1])[0])
     return int(distances[position]), dhash_distance, float(index.timestamps[position])
 
 

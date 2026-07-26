@@ -116,7 +116,7 @@ def _content_span(
         return 0, length
 
     start, stop = int(lit[0]), int(lit[-1]) + 1
-    minimum_keep = max(1, int(round(length * (1.0 - max_crop_fraction))))
+    minimum_keep = max(1, round(length * (1.0 - max_crop_fraction)))
     while stop - start < minimum_keep:
         if start > 0:
             start -= 1
@@ -147,7 +147,7 @@ def normalize_array(array: np.ndarray) -> Image.Image:
     if array.ndim == 3:
         array = np.asarray(Image.fromarray(array).convert("L"))
     cropped = crop_borders(array)
-    return Image.fromarray(cropped).resize(NORMALIZED_SIZE, Image.LANCZOS)
+    return Image.fromarray(cropped).resize(NORMALIZED_SIZE, Image.Resampling.LANCZOS)
 
 
 def normalize_image(image: Image.Image) -> Image.Image:

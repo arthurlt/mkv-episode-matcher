@@ -50,9 +50,7 @@ def describe_still_coverage(episodes: list[Episode]) -> StillCoverage:
     return StillCoverage(
         total_episodes=len(episodes),
         total_stills=sum(len(episode.stills) for episode in episodes),
-        episodes_without_stills=tuple(
-            episode.code for episode in episodes if not episode.stills
-        ),
+        episodes_without_stills=tuple(episode.code for episode in episodes if not episode.stills),
     )
 
 
@@ -102,7 +100,8 @@ def collect_season(
             _safe_collect(
                 "tmdb",
                 lambda: tmdb.collect_season(
-                    tmdb_series or tmdb.resolve_series(_require_name(series_name), year).provider_id,
+                    tmdb_series
+                    or tmdb.resolve_series(_require_name(series_name), year).provider_id,
                     season,
                 ),
             )
@@ -112,7 +111,8 @@ def collect_season(
             _safe_collect(
                 "tvdb",
                 lambda: tvdb.collect_season(
-                    tvdb_series or tvdb.resolve_series(_require_name(series_name), year).provider_id,
+                    tvdb_series
+                    or tvdb.resolve_series(_require_name(series_name), year).provider_id,
                     season,
                     extended=tvdb_extended,
                 ),

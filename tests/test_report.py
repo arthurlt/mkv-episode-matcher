@@ -39,16 +39,16 @@ def matched_result(**overrides) -> MatchResult:
         timestamp=612.5,
         dhash_distance=4,
     )
-    defaults = dict(
-        video=video(),
-        status=MatchStatus.MATCHED,
-        episode=episode,
-        hit=hit,
-        cost=3.0,
-        runner_up=Episode(season=2, number=2, title="Blood Money"),
-        runner_up_cost=28.0,
-        supporting_stills=2,
-    )
+    defaults = {
+        "video": video(),
+        "status": MatchStatus.MATCHED,
+        "episode": episode,
+        "hit": hit,
+        "cost": 3.0,
+        "runner_up": Episode(season=2, number=2, title="Blood Money"),
+        "runner_up_cost": 28.0,
+        "supporting_stills": 2,
+    }
     defaults.update(overrides)
     return MatchResult(**defaults)
 
@@ -132,7 +132,9 @@ class TestPayload:
 
 class TestTable:
     def test_renders_a_row_per_file(self):
-        table = render_table([matched_result(), MatchResult(video=video("b.mkv"), status=MatchStatus.UNMATCHED)])
+        table = render_table(
+            [matched_result(), MatchResult(video=video("b.mkv"), status=MatchStatus.UNMATCHED)]
+        )
 
         assert table.row_count == 2
 
@@ -163,9 +165,37 @@ class TestTable:
     def test_every_row_has_one_cell_per_column(self):
         from mkv_episode_matcher.report import TABLE_COLUMNS
 
-        rows = table_rows([matched_result(), MatchResult(video=video("b.mkv"), status=MatchStatus.SKIPPED)])
+        rows = table_rows(
+            [matched_result(), MatchResult(video=video("b.mkv"), status=MatchStatus.SKIPPED)]
+        )
 
         assert all(len(row) == len(TABLE_COLUMNS) for row in rows)
+
+    def test_an_empty_notes_column_is_dropped(self):
+        table = render_table([matched_result()])
+
+        assert "Notes" not in [column.header for column in table.columns]
+
+    def test_the_notes_column_appears_when_something_needs_saying(self):
+        results = [
+            matched_result(),
+            MatchResult(video=video("b.mkv"), status=MatchStatus.AMBIGUOUS, notes=["too close"]),
+        ]
+
+        table = render_table(results)
+
+        assert "Notes" in [column.header for column in table.columns]
+
+    def test_identifying_columns_are_always_present(self):
+        table = render_table([MatchResult(video=video(), status=MatchStatus.UNMATCHED)])
+
+        headers = [column.header for column in table.columns]
+        assert headers[:3] == ["File", "Status", "Episode"]
+
+    def test_dropping_columns_keeps_every_row_consistent(self):
+        table = render_table([matched_result(), matched_result()])
+
+        assert len({len(column._cells) for column in table.columns}) == 1
 
 
 @requires_ffmpeg
@@ -185,7 +215,9 @@ class TestPreviews:
         )
 
         written = export_previews(
-            [result], still_paths={"https://img/a.jpg": still_path}, destination=tmp_path / "previews"
+            [result],
+            still_paths={"https://img/a.jpg": still_path},
+            destination=tmp_path / "previews",
         )
 
         assert len(written) == 1

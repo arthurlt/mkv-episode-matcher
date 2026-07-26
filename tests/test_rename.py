@@ -10,7 +10,6 @@ from mkv_episode_matcher.models import (
     Episode,
     MatchResult,
     MatchStatus,
-    SkipReason,
     Still,
     StillHit,
     VideoFile,
@@ -162,9 +161,7 @@ class TestApplyRenames:
         second = tmp_path / "t01.mkv"
         first.write_bytes(b"a")
         second.write_bytes(b"b")
-        plans = plan_renames(
-            [result_for(first, 1, "X"), result_for(second, 1, "X")], series="Show"
-        )
+        plans = plan_renames([result_for(first, 1, "X"), result_for(second, 1, "X")], series="Show")
 
         outcomes = apply_renames(plans, dry_run=False)
 

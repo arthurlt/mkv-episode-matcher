@@ -17,9 +17,9 @@ from mkv_episode_matcher.score_visual import (
     ScoringConfig,
     episode_cost,
     hash_stills,
+    score_all,
     score_episode,
     score_file,
-    score_all,
 )
 
 from .conftest import make_pattern, still_bytes
@@ -93,7 +93,9 @@ class TestScoreEpisode:
         frames = [hash_array(make_pattern(seed)) for seed in (10, 11, 12, 13)]
         episode = episode_with(1, [12])
 
-        score = score_episode(index_of(frames, step=2.0), episode, hashes_for([12]), ScoringConfig())
+        score = score_episode(
+            index_of(frames, step=2.0), episode, hashes_for([12]), ScoringConfig()
+        )
 
         assert score.best_distance == 0
         assert score.best_hit.timestamp == pytest.approx(4.0)
@@ -144,7 +146,7 @@ class TestScoreEpisode:
         frame = hash_array(make_pattern(70))
         colliding = ImageHashes(phash=frame.phash, dhash=frame.dhash ^ 0xFFFFFFFFFFFFFFFF)
         episode = episode_with(1, [70])
-        lookup = {f"https://img/1-70.jpg": colliding}
+        lookup = {"https://img/1-70.jpg": colliding}
 
         score = score_episode(index_of([frame]), episode, lookup, ScoringConfig())
 
@@ -174,7 +176,9 @@ class TestScoreFile:
         frames = [hash_array(make_pattern(90))]
         episodes = [episode_with(number, [500 + number]) for number in (1, 2, 3)]
 
-        scores = score_file(video, index_of(frames), episodes, hashes_for([501, 502, 503]), ScoringConfig())
+        scores = score_file(
+            video, index_of(frames), episodes, hashes_for([501, 502, 503]), ScoringConfig()
+        )
 
         assert len(scores.scores) == 3
 
@@ -242,11 +246,17 @@ class TestHashStills:
         hash_cache = JsonCache(cache_dir / "hashes")
 
         first = hash_stills(
-            stills, client=recorded_api.client(), images=ImageCache(cache_dir), hash_cache=hash_cache
+            stills,
+            client=recorded_api.client(),
+            images=ImageCache(cache_dir),
+            hash_cache=hash_cache,
         )
         (cache_dir / stills[0].filename).unlink()
         second = hash_stills(
-            stills, client=recorded_api.client(), images=ImageCache(cache_dir), hash_cache=hash_cache
+            stills,
+            client=recorded_api.client(),
+            images=ImageCache(cache_dir),
+            hash_cache=hash_cache,
         )
 
         assert first == second
@@ -255,7 +265,10 @@ class TestHashStills:
         still = Still("tmdb", "https://image.tmdb.org/t/p/w780/a.jpg")
 
         hash_stills(
-            [still, still], client=recorded_api.client(), images=ImageCache(cache_dir), hash_cache=None
+            [still, still],
+            client=recorded_api.client(),
+            images=ImageCache(cache_dir),
+            hash_cache=None,
         )
 
         assert recorded_api.paths_called("/a.jpg") == 1
@@ -265,9 +278,7 @@ class TestHashStills:
         Image.fromarray(make_pattern(6)).save(buffer, format="PNG")
 
         client = httpx.Client(
-            transport=httpx.MockTransport(
-                lambda r: httpx.Response(200, content=buffer.getvalue())
-            )
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, content=buffer.getvalue()))
         )
         hashed = hash_stills(
             [Still("tmdb", "https://img/a.png", kind=StillKind.SCREENCAP)],

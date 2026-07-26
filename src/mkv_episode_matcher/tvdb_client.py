@@ -8,6 +8,7 @@ lands somewhere the matcher can find it.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
@@ -15,7 +16,7 @@ import httpx
 
 from .cache import JsonCache
 from .models import Episode, Still, StillKind, dedupe_stills
-from .providers import JsonApiClient, ProviderError, SeriesMatch, choose_series
+from .providers import JsonApiClient, ProviderError, QueryParams, SeriesMatch, choose_series
 
 __all__ = ["TVDB_API_BASE", "TVDB_ARTWORK_BASE", "TvdbClient"]
 
@@ -68,17 +69,16 @@ class TvdbClient(JsonApiClient):
             logger.debug("authenticated against thetvdb")
         return self._token
 
-    def _get(self, path: str, *, extra: dict[str, object] | None = None, cache_key: str) -> dict:
+    def _get(self, path: str, *, extra: QueryParams | None = None, cache_key: str) -> dict:
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
-        payload = self.get_json(
+        return self.get_json(
             path,
             params=extra,
             headers={"Authorization": f"Bearer {self.token()}"},
             cache_key=cache_key,
         )
-        return payload
 
     @staticmethod
     def artwork_url(image: str) -> str:
@@ -234,9 +234,9 @@ class TvdbClient(JsonApiClient):
         with ThreadPoolExecutor(max_workers=max(1, min(self.max_workers, len(episodes)))) as pool:
             extra = list(
                 pool.map(
-                    lambda episode: self.episode_artworks(ids[episode.number])
-                    if episode.number in ids
-                    else (),
+                    lambda episode: (
+                        self.episode_artworks(ids[episode.number]) if episode.number in ids else ()
+                    ),
                     episodes,
                 )
             )
@@ -257,13 +257,12 @@ def classify_artwork(type_id: object, image: str) -> StillKind:
     >>> classify_artwork(2, "/banners/series/1/posters/a.jpg").value
     'promotional'
     """
-    try:
-        numeric = int(type_id)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        numeric = -1
+    numeric = -1
+    if isinstance(type_id, (int, str)):
+        with contextlib.suppress(ValueError):
+            numeric = int(type_id)
     if numeric in SCREENCAP_ARTWORK_TYPES:
         return StillKind.SCREENCAP
     if "/episodes/" in image:
         return StillKind.SCREENCAP
     return StillKind.PROMOTIONAL
-
