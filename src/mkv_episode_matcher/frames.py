@@ -10,10 +10,12 @@ of Hamming arithmetic instead of another full decode.
 from __future__ import annotations
 
 import contextlib
+import functools
 import hashlib
 import io
 import json
 import logging
+import re
 import shutil
 import subprocess
 import tempfile
@@ -34,10 +36,12 @@ __all__ = [
     "FrameIndex",
     "FrameIndexCache",
     "FrameIndexer",
+    "FrameStream",
     "IndexParams",
     "build_indexes",
     "extract_frame_hashes",
     "grab_frame",
+    "parse_showinfo_timestamps",
 ]
 
 logger = logging.getLogger(__name__)
@@ -228,83 +232,140 @@ def _scaled_size(source: tuple[int, int], sample_width: int) -> tuple[int, int]:
     return max(2, width), height
 
 
-def iter_raw_frames(
-    path: Path,
-    *,
-    start_s: float,
-    duration_s: float | None,
-    interval_s: float,
-    size: tuple[int, int],
-) -> Iterator[np.ndarray]:
-    """Yield grayscale frames decoded from ``path`` on a fixed cadence.
+_PTS_TIME = re.compile(r"pts_time:(\S+)")
 
-    A single ``ffmpeg`` process streams raw frames over a pipe, so the file is
-    decoded exactly once no matter how many frames are wanted.
 
-    Parameters
-    ----------
-    path
-        Video file to decode.
-    start_s
-        Offset to start sampling from.
-    duration_s
-        How much runtime to cover, or ``None`` for "to the end".
-    interval_s
-        Seconds between sampled frames.
-    size
-        ``(width, height)`` the frames are scaled to.
+@functools.lru_cache(maxsize=1)
+def _passthrough_flag() -> tuple[str, str]:
+    """Return the argument pair that stops ffmpeg re-timing the output stream.
 
-    Yields
-    ------
-    numpy.ndarray
-        ``uint8`` arrays of shape ``(height, width)``.
+    Without it, ffmpeg conforms the raw output to a constant frame rate by
+    duplicating frames, which would silently corrupt the index.
     """
-    width, height = size
-    command = [require_ffmpeg(), "-hide_banner", "-nostdin", "-v", "error"]
-    if start_s > 0:
-        command += ["-ss", f"{start_s:.3f}"]
-    command += ["-i", str(path)]
-    if duration_s is not None:
-        command += ["-t", f"{duration_s:.3f}"]
-    command += [
-        "-an",
-        "-sn",
-        "-dn",
-        "-vf",
-        f"fps=1/{interval_s:.6f},scale={width}:{height}",
-        "-pix_fmt",
-        "gray",
-        "-f",
-        "rawvideo",
-        "pipe:1",
-    ]
-    logger.debug("extracting frames: %s", " ".join(command))
+    try:
+        banner = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            [require_ffmpeg(), "-version"], capture_output=True, text=True, check=False
+        ).stdout
+        major = int(re.search(r"ffmpeg version n?(\d+)", banner).group(1))
+    except (AttributeError, ValueError, OSError):
+        major = 0
+    return ("-fps_mode", "passthrough") if major >= 5 else ("-vsync", "0")
 
-    frame_bytes = width * height
-    with tempfile.TemporaryFile() as error_sink:
-        process = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
-            command,
-            stdout=subprocess.PIPE,
-            stderr=error_sink,
-            stdin=subprocess.DEVNULL,
-            bufsize=frame_bytes,
-        )
+
+def parse_showinfo_timestamps(text: str) -> list[float]:
+    """Extract frame presentation times, in order, from ``showinfo`` output.
+
+    Examples
+    --------
+    >>> parse_showinfo_timestamps("n:0 pts:0 pts_time:0 x\\nn:1 pts:3000 pts_time:3.5 y")
+    [0.0, 3.5]
+    >>> parse_showinfo_timestamps("no frames here")
+    []
+    """
+    times = []
+    for match in _PTS_TIME.finditer(text):
         try:
-            assert process.stdout is not None
-            while True:
-                payload = process.stdout.read(frame_bytes)
-                if len(payload) < frame_bytes:
-                    break
-                yield np.frombuffer(payload, dtype=np.uint8).reshape(height, width)
-        finally:
-            with contextlib.suppress(OSError):
-                if process.stdout is not None:
-                    process.stdout.close()
-            returncode = process.wait()
-        if returncode != 0:
-            error_sink.seek(0)
-            detail = error_sink.read().decode(errors="replace").strip()
-            raise FrameExtractionError(f"ffmpeg failed for {path}: {detail}")
+            times.append(float(match.group(1)))
+        except ValueError:
+            continue
+    return times
+
+
+class FrameStream:
+    """Streams sampled frames from one ``ffmpeg`` process, with true timestamps.
+
+    Frames are selected with the ``select`` filter rather than ``fps``. That
+    distinction matters: ``fps`` resamples onto a synthetic clock and stamps
+    each output frame with a time up to half an interval earlier than the
+    picture it actually carries, which would send anyone spot-checking a match
+    to the wrong moment. ``select`` passes real frames through untouched, and
+    ``showinfo`` reports their real presentation times.
+
+    Attributes
+    ----------
+    timestamps
+        Populated once iteration finishes: the true time of each yielded frame,
+        in seconds from the start of the file.
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        start_s: float,
+        duration_s: float | None,
+        interval_s: float,
+        size: tuple[int, int],
+    ) -> None:
+        self.path = path
+        self.start_s = start_s
+        self.duration_s = duration_s
+        self.interval_s = interval_s
+        self.size = size
+        self.timestamps: list[float] = []
+
+    def command(self) -> list[str]:
+        """Return the ``ffmpeg`` argv used to sample this file."""
+        width, height = self.size
+        select = (
+            f"select=isnan(prev_selected_t)+gte(t-prev_selected_t\\,{self.interval_s:.6f})"
+        )
+        command = [require_ffmpeg(), "-hide_banner", "-nostdin", "-v", "info"]
+        if self.start_s > 0:
+            command += ["-ss", f"{self.start_s:.3f}"]
+        command += ["-i", str(self.path)]
+        if self.duration_s is not None:
+            command += ["-t", f"{self.duration_s:.3f}"]
+        command += [
+            "-an",
+            "-sn",
+            "-dn",
+            "-vf",
+            f"{select},scale={width}:{height},showinfo",
+            *_passthrough_flag(),
+            "-pix_fmt",
+            "gray",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ]
+        return command
+
+    def __iter__(self) -> Iterator[np.ndarray]:
+        """Yield each sampled frame as a ``uint8`` array of shape ``(h, w)``."""
+        width, height = self.size
+        frame_bytes = width * height
+        command = self.command()
+        logger.debug("extracting frames: %s", " ".join(command))
+
+        with tempfile.TemporaryFile() as error_sink:
+            process = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+                command,
+                stdout=subprocess.PIPE,
+                stderr=error_sink,
+                stdin=subprocess.DEVNULL,
+                bufsize=frame_bytes,
+            )
+            try:
+                assert process.stdout is not None
+                while True:
+                    payload = process.stdout.read(frame_bytes)
+                    if len(payload) < frame_bytes:
+                        break
+                    yield np.frombuffer(payload, dtype=np.uint8).reshape(height, width)
+            finally:
+                with contextlib.suppress(OSError):
+                    if process.stdout is not None:
+                        process.stdout.close()
+                returncode = process.wait()
+                error_sink.seek(0)
+                log = error_sink.read().decode(errors="replace")
+
+            if returncode != 0:
+                raise FrameExtractionError(f"ffmpeg failed for {self.path}: {log.strip()}")
+            self.timestamps = [
+                self.start_s + value for value in parse_showinfo_timestamps(log)
+            ]
 
 
 def extract_frame_hashes(
@@ -320,24 +381,28 @@ def extract_frame_hashes(
     Returns
     -------
     tuple of numpy.ndarray
-        ``(timestamps, phashes, dhashes)``.
+        ``(timestamps, phashes, dhashes)``, aligned and equal in length.
     """
-    timestamps: list[float] = []
+    stream = FrameStream(
+        path, start_s=start_s, duration_s=duration_s, interval_s=interval_s, size=size
+    )
     phashes: list[int] = []
     dhashes: list[int] = []
-    for position, frame in enumerate(
-        iter_raw_frames(
-            path,
-            start_s=start_s,
-            duration_s=duration_s,
-            interval_s=interval_s,
-            size=size,
-        )
-    ):
+    for frame in stream:
         hashes = hash_array(frame)
-        timestamps.append(start_s + position * interval_s)
         phashes.append(hashes.phash)
         dhashes.append(hashes.dhash)
+
+    timestamps = stream.timestamps
+    if len(timestamps) != len(phashes):
+        logger.warning(
+            "ffmpeg reported %d timestamps for %d frames of %s; falling back to the "
+            "nominal cadence",
+            len(timestamps),
+            len(phashes),
+            path.name,
+        )
+        timestamps = [start_s + position * interval_s for position in range(len(phashes))]
 
     return (
         np.asarray(timestamps, dtype=np.float32),

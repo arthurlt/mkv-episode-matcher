@@ -204,6 +204,33 @@ class TestBuildAgainstRealVideos:
         assert distance <= 6
         assert 6.0 <= index.timestamps[position] <= 8.5
 
+    @pytest.mark.parametrize("interval", [1.0, 3.0, 4.0, 2.5])
+    def test_reported_timestamps_point_at_the_content_that_is_really_there(
+        self, video_factory, cache_dir, interval
+    ):
+        """Regression: ffmpeg's ``fps`` filter stamps frames up to half an interval early.
+
+        A timestamp a human cannot jump to is worse than no timestamp, so every
+        sampled frame must match whatever the video actually shows at that time.
+        """
+        seeds = [600 + slot for slot in range(10)]
+        seconds_per_slot = 2.0
+        path = video_factory("clip.mkv", seeds, seconds_per_frame=seconds_per_slot)
+        reference = [hash_array(make_pattern(seed)).phash for seed in seeds]
+
+        index = FrameIndexer(FrameIndexCache(cache_dir), IndexParams(interval_s=interval)).get(
+            probe_video(path)
+        )
+
+        for timestamp, phash in zip(index.timestamps, index.phashes, strict=True):
+            expected_slot = min(int(float(timestamp) // seconds_per_slot), len(seeds) - 1)
+            distances = [hamming_distance(int(phash), value) for value in reference]
+
+            assert distances.index(min(distances)) == expected_slot, (
+                f"frame reported at {float(timestamp)}s shows slot "
+                f"{distances.index(min(distances))}, not {expected_slot}"
+            )
+
     def test_a_coarser_interval_produces_fewer_frames(self, video_factory, cache_dir):
         path = video_factory("clip.mkv", list(range(41, 51)), seconds_per_frame=1.0)
         video = probe_video(path)
@@ -273,20 +300,36 @@ class TestBuildAgainstRealVideos:
         assert set(indexes) == {video.path for video in videos}
         assert all(len(index) > 0 for index in indexes.values())
 
-    def test_window_extraction_refines_around_a_hit(self, video_factory, cache_dir):
-        seeds = [71, 72, 73, 74, 75, 76]
-        path = video_factory("clip.mkv", seeds, seconds_per_frame=2.0)
+    def test_window_extraction_stays_inside_the_requested_range(self, video_factory, cache_dir):
+        path = video_factory("clip.mkv", [71, 72, 73, 74, 75, 76], seconds_per_frame=2.0)
         indexer = FrameIndexer(FrameIndexCache(cache_dir), IndexParams(interval_s=4.0))
-        video = probe_video(path)
 
-        window = indexer.extract_window(video, start_s=4.0, end_s=8.0, interval_s=0.5)
+        window = indexer.extract_window(
+            probe_video(path), start_s=4.0, end_s=8.0, interval_s=0.5
+        )
 
         assert len(window) >= 4
         assert float(window.timestamps.min()) >= 3.9
-        target = hash_array(make_pattern(73)).phash
-        found = window.nearest(target)
-        assert found is not None
-        assert found[1] <= 6
+        assert float(window.timestamps.max()) <= 8.6
+
+    def test_refinement_finds_a_frame_the_coarse_pass_stepped_over(
+        self, video_factory, cache_dir
+    ):
+        """The point of two-stage mode: a still between coarse samples is recoverable."""
+        seeds = list(range(700, 716))
+        path = video_factory("clip.mkv", seeds, seconds_per_frame=0.5)
+        video = probe_video(path)
+        indexer = FrameIndexer(FrameIndexCache(cache_dir), IndexParams(interval_s=4.0))
+        coarse = indexer.get(video)
+        target = hash_array(make_pattern(seeds[9])).phash
+
+        coarse_best = coarse.nearest(target)
+        refined = indexer.extract_window(video, start_s=3.0, end_s=6.0, interval_s=0.25)
+        refined_best = refined.nearest(target)
+
+        assert coarse_best[1] > 12, "the fixture must actually miss on the coarse pass"
+        assert refined_best[1] <= 4
+        assert float(refined.timestamps[refined_best[0]]) == pytest.approx(4.5, abs=0.3)
 
     def test_distinct_videos_produce_distinct_indexes(self, video_factory, cache_dir, tmp_path):
         first = video_factory("a.mkv", [101, 102, 103, 104])
