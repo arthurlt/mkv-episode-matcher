@@ -18,6 +18,7 @@ import numpy as np
 from PIL import Image, UnidentifiedImageError
 
 from .cache import ImageCache, JsonCache
+from .cancellation import CancellationToken
 from .frames import FrameIndex
 from .models import Episode, EpisodeScore, FileScores, Still, StillHit, VideoFile
 from .normalize import ImageHashes, hamming_distances, hash_image
@@ -83,6 +84,7 @@ def hash_stills(
     images: ImageCache,
     hash_cache: JsonCache | None = None,
     max_workers: int = 8,
+    token: CancellationToken | None = None,
 ) -> dict[str, ImageHashes]:
     """Download and hash provider stills, keyed by URL.
 
@@ -111,6 +113,8 @@ def hash_stills(
     unique: dict[str, Still] = {still.url: still for still in stills}
     if not unique:
         return {}
+    token = token or CancellationToken()
+    token.raise_if_cancelled()
 
     hashed: dict[str, ImageHashes] = {}
     pending: dict[str, Still] = {}
@@ -122,11 +126,15 @@ def hash_stills(
             pending[url] = still
 
     if pending:
-        with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(pending)))) as pool:
-            futures = {
-                pool.submit(_download_and_hash, client, images, still): url
-                for url, still in pending.items()
-            }
+
+        def prepare(still: Still) -> ImageHashes | None:
+            if token.cancelled:
+                return None
+            return _download_and_hash(client, images, still)
+
+        pool = ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(pending))))
+        try:
+            futures = {pool.submit(prepare, still): url for url, still in pending.items()}
             for future, url in futures.items():
                 result = future.result()
                 if result is None:
@@ -136,6 +144,9 @@ def hash_stills(
                     hash_cache.put(
                         f"still-hash/{url}", {"phash": result.phash, "dhash": result.dhash}
                     )
+        finally:
+            pool.shutdown(wait=True, cancel_futures=token.cancelled)
+        token.raise_if_cancelled()
 
     missing = len(unique) - len(hashed)
     if missing:

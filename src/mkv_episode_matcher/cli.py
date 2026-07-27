@@ -12,6 +12,12 @@ import typer
 from rich.console import Console
 
 from .cache import CacheRoot, JsonCache
+from .cancellation import (
+    EXIT_INTERRUPTED,
+    CancellationToken,
+    OperationCancelledError,
+    cancel_on_sigint,
+)
 from .frames import IndexParams
 from .logging_utils import configure_logging
 from .metadata import describe_still_coverage
@@ -190,6 +196,7 @@ def match(
     cache = CacheRoot(cache_dir) if cache_dir else CacheRoot.default()
     logger.info("using cache at %s", cache.path)
 
+    cancellation = CancellationToken()
     http = build_http_client()
     try:
         tmdb = None
@@ -202,6 +209,7 @@ def match(
                 cache=JsonCache(cache.api_dir / "tmdb"),
                 image_size=image_size,
                 max_workers=workers,
+                token=cancellation,
             )
 
         tvdb = None
@@ -214,6 +222,7 @@ def match(
                 client=http,
                 cache=JsonCache(cache.api_dir / "tvdb"),
                 max_workers=workers,
+                token=cancellation,
             )
 
         request = MatchRequest(
@@ -243,11 +252,21 @@ def match(
         )
 
         try:
-            run = run_match(request, http=http, cache=cache, tmdb=tmdb, tvdb=tvdb)
+            with cancel_on_sigint(cancellation):
+                run = run_match(
+                    request, http=http, cache=cache, tmdb=tmdb, tvdb=tvdb, token=cancellation
+                )
+        except OperationCancelledError as error:
+            console.print("[yellow]Interrupted. Indexes finished so far were cached.[/yellow]")
+            raise typer.Exit(code=EXIT_INTERRUPTED) from error
+        except KeyboardInterrupt as error:
+            raise typer.Exit(code=EXIT_INTERRUPTED) from error
         except ProviderError as error:
             logger.error("%s", error)
             raise typer.Exit(code=1) from error
     finally:
+        # Guarantees no ffmpeg child outlives the command, whichever way it ends.
+        cancellation.cancel()
         http.close()
 
     _emit(run, console=console, series=series, season=season, json_out=json_out, previews=previews)

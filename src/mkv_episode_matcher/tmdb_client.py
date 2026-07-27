@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 
 from .cache import JsonCache
+from .cancellation import CancellationToken
 from .models import Episode, Still, StillKind, dedupe_stills
 from .providers import JsonApiClient, ProviderError, QueryParams, SeriesMatch, choose_series
 
@@ -43,12 +44,14 @@ class TmdbClient(JsonApiClient):
         language: str = "en-US",
         max_retries: int = 3,
         max_workers: int = 4,
+        token: CancellationToken | None = None,
     ) -> None:
         super().__init__(client=client, cache=cache, max_retries=max_retries)
         self.api_key = api_key
         self.image_size = image_size
         self.language = language
         self.max_workers = max_workers
+        self.token = token or CancellationToken()
 
     @property
     def uses_bearer_token(self) -> bool:
@@ -185,13 +188,18 @@ class TmdbClient(JsonApiClient):
         if not episodes:
             return []
 
-        with ThreadPoolExecutor(max_workers=max(1, min(self.max_workers, len(episodes)))) as pool:
-            extra = list(
-                pool.map(
-                    lambda episode: self.episode_stills(series_id, season, episode.number),
-                    episodes,
-                )
-            )
+        def stills_for(episode: Episode) -> tuple[Still, ...]:
+            if self.token.cancelled:
+                return ()
+            return self.episode_stills(series_id, season, episode.number)
+
+        self.token.raise_if_cancelled()
+        pool = ThreadPoolExecutor(max_workers=max(1, min(self.max_workers, len(episodes))))
+        try:
+            extra = list(pool.map(stills_for, episodes))
+        finally:
+            pool.shutdown(wait=True, cancel_futures=self.token.cancelled)
+        self.token.raise_if_cancelled()
 
         merged = []
         for episode, stills in zip(episodes, extra, strict=True):

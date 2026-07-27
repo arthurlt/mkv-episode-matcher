@@ -112,6 +112,41 @@ def _request(video, *, refine_window_s: float = 3.0) -> MatchRequest:
 
 @requires_ffmpeg
 @pytest.mark.ffmpeg
+class TestRunMatchCancellation:
+    def test_an_already_cancelled_run_stops_before_touching_anything(
+        self, video_factory, cache_dir, recorded_api, tmp_path
+    ):
+        from mkv_episode_matcher.cancellation import CancellationToken, OperationCancelledError
+
+        rips = tmp_path / "rips"
+        video_factory("title_t00.mkv", list(range(8000, 8010)), directory=rips)
+        cache = CacheRoot(cache_dir)
+        http = recorded_api.client()
+        token = CancellationToken()
+        token.cancel()
+
+        with pytest.raises(OperationCancelledError):
+            run_match(
+                MatchRequest(
+                    input_dir=rips,
+                    series="Test Precinct",
+                    season=2,
+                    tmdb_series_id="4224",
+                    duration_filter=DurationFilter(min_duration_s=1.0),
+                ),
+                http=http,
+                cache=cache,
+                tmdb=TmdbClient(api_key="k", client=http, cache=JsonCache(cache.api_dir / "tmdb")),
+                tvdb=None,
+                token=token,
+            )
+
+        assert recorded_api.requests == []
+        assert not list(cache.frames_dir.glob("*.npz"))
+
+
+@requires_ffmpeg
+@pytest.mark.ffmpeg
 class TestRunMatch:
     def test_reports_metadata_alongside_the_verdicts(
         self, video_factory, cache_dir, recorded_api, tmp_path

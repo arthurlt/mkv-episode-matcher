@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 
 from .cache import JsonCache
+from .cancellation import CancellationToken
 from .models import Episode, Still, StillKind, dedupe_stills
 from .providers import JsonApiClient, ProviderError, QueryParams, SeriesMatch, choose_series
 
@@ -47,16 +48,18 @@ class TvdbClient(JsonApiClient):
         season_type: str = "default",
         max_retries: int = 3,
         max_workers: int = 4,
+        token: CancellationToken | None = None,
     ) -> None:
         super().__init__(client=client, cache=cache, max_retries=max_retries)
         self.api_key = api_key
         self.pin = pin
         self.season_type = season_type
         self.max_workers = max_workers
+        self.token = token or CancellationToken()
         self._token: str | None = None
 
-    def token(self) -> str:
-        """Return a bearer token, logging in once per client instance."""
+    def bearer_token(self) -> str:
+        """Return the API bearer token, logging in once per client instance."""
         if self._token is None:
             body: dict[str, object] = {"apikey": self.api_key}
             if self.pin:
@@ -76,7 +79,7 @@ class TvdbClient(JsonApiClient):
         return self.get_json(
             path,
             params=extra,
-            headers={"Authorization": f"Bearer {self.token()}"},
+            headers={"Authorization": f"Bearer {self.bearer_token()}"},
             cache_key=cache_key,
         )
 

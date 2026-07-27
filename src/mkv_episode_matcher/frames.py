@@ -28,6 +28,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from .cancellation import CancellationToken, OperationCancelledError
 from .models import VideoFile
 from .normalize import hamming_distances, hash_array
 from .probe import probe_stream
@@ -316,6 +317,7 @@ class FrameStream:
         size: tuple[int, int],
         hwaccel: str | None = None,
         keyframes_only: bool = False,
+        token: CancellationToken | None = None,
     ) -> None:
         self.path = path
         self.start_s = start_s
@@ -324,6 +326,7 @@ class FrameStream:
         self.size = size
         self.hwaccel = hwaccel
         self.keyframes_only = keyframes_only
+        self.token = token or CancellationToken()
         self.timestamps: list[float] = []
 
     def command(self) -> list[str]:
@@ -360,6 +363,7 @@ class FrameStream:
         """Yield each sampled frame as a ``uint8`` array of shape ``(h, w)``."""
         width, height = self.size
         frame_bytes = width * height
+        self.token.raise_if_cancelled()
         command = self.command()
         logger.debug("extracting frames: %s", " ".join(command))
 
@@ -371,21 +375,26 @@ class FrameStream:
                 stdin=subprocess.DEVNULL,
                 bufsize=frame_bytes,
             )
-            try:
-                assert process.stdout is not None
-                while True:
-                    payload = process.stdout.read(frame_bytes)
-                    if len(payload) < frame_bytes:
-                        break
-                    yield np.frombuffer(payload, dtype=np.uint8).reshape(height, width)
-            finally:
-                with contextlib.suppress(OSError):
-                    if process.stdout is not None:
-                        process.stdout.close()
-                returncode = process.wait()
-                error_sink.seek(0)
-                log = error_sink.read().decode(errors="replace")
+            # Tracking hands ffmpeg to the token, which kills it on Ctrl+C. That
+            # is what unblocks the read below; checking a flag alone would not.
+            with self.token.track(process):
+                try:
+                    assert process.stdout is not None
+                    while not self.token.cancelled:
+                        payload = process.stdout.read(frame_bytes)
+                        if len(payload) < frame_bytes:
+                            break
+                        yield np.frombuffer(payload, dtype=np.uint8).reshape(height, width)
+                finally:
+                    with contextlib.suppress(OSError):
+                        if process.stdout is not None:
+                            process.stdout.close()
+                    returncode = process.wait()
+                    error_sink.seek(0)
+                    log = error_sink.read().decode(errors="replace")
 
+            # A killed decoder reports failure; say what actually happened.
+            self.token.raise_if_cancelled()
             if returncode != 0:
                 raise FrameExtractionError(f"ffmpeg failed for {self.path}: {log.strip()}")
             self.timestamps = [self.start_s + value for value in parse_showinfo_timestamps(log)]
@@ -488,6 +497,7 @@ def extract_frame_hashes(
     hwaccel: str | None = None,
     keyframes_only: bool = False,
     codec: str = "",
+    token: CancellationToken | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Decode ``path`` on a cadence and hash every sampled frame.
 
@@ -510,6 +520,8 @@ def extract_frame_hashes(
     tuple of numpy.ndarray
         ``(timestamps, phashes, dhashes)``, aligned and equal in length.
     """
+    token = token or CancellationToken()
+    token.raise_if_cancelled()
     if hwaccel and not hwaccel_supported(hwaccel, path, codec):
         hwaccel = None
 
@@ -522,6 +534,7 @@ def extract_frame_hashes(
             size=size,
             hwaccel=hwaccel,
             keyframes_only=keyframes_only,
+            token=token,
         )
     except FrameExtractionError:
         if not hwaccel:
@@ -543,6 +556,7 @@ def extract_frame_hashes(
             size=size,
             hwaccel=None,
             keyframes_only=keyframes_only,
+            token=token,
         )
 
     timestamps = stream.timestamps
@@ -572,6 +586,7 @@ def _decode_and_hash(
     size: tuple[int, int],
     hwaccel: str | None,
     keyframes_only: bool,
+    token: CancellationToken,
 ) -> tuple[FrameStream, list[int], list[int]]:
     """Run one decode pass, returning the stream and the hashes it produced."""
     stream = FrameStream(
@@ -582,6 +597,7 @@ def _decode_and_hash(
         size=size,
         hwaccel=hwaccel,
         keyframes_only=keyframes_only,
+        token=token,
     )
     phashes: list[int] = []
     dhashes: list[int] = []
@@ -685,11 +701,17 @@ class FrameIndexer:
     """
 
     def __init__(
-        self, cache: FrameIndexCache, params: IndexParams, *, hwaccel: str | None = None
+        self,
+        cache: FrameIndexCache,
+        params: IndexParams,
+        *,
+        hwaccel: str | None = None,
+        token: CancellationToken | None = None,
     ) -> None:
         self.cache = cache
         self.params = params
         self.hwaccel = hwaccel
+        self.token = token or CancellationToken()
 
     def get(self, video: VideoFile, *, refresh: bool = False) -> FrameIndex:
         """Return the frame index for ``video``, building it only if needed.
@@ -701,6 +723,7 @@ class FrameIndexer:
         refresh
             Ignore any cached index and rebuild from the video.
         """
+        self.token.raise_if_cancelled()
         if not refresh:
             cached = self.cache.load(video, self.params)
             if cached is not None:
@@ -736,6 +759,7 @@ class FrameIndexer:
             hwaccel=self.hwaccel,
             keyframes_only=self.params.keyframes_only,
             codec=info.codec_name,
+            token=self.token,
         )
         if timestamps.size == 0:
             raise FrameExtractionError(f"no frames could be decoded from {video.path}")
@@ -802,6 +826,7 @@ class FrameIndexer:
             size=size,
             hwaccel=self.hwaccel,
             codec=info.codec_name,
+            token=self.token,
         )
         return FrameIndex(
             video_path=video.path,
@@ -851,12 +876,24 @@ def build_indexes(
     if not videos:
         return {}
 
+    token = indexer.token
+    token.raise_if_cancelled()
+
     indexes: dict[Path, FrameIndex] = {}
-    with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(videos)))) as pool:
+    pool = ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(videos))))
+    try:
         futures = {pool.submit(indexer.get, video, refresh=refresh): video for video in videos}
         for future, video in futures.items():
             try:
                 indexes[video.path] = future.result()
+            except OperationCancelledError:
+                logger.debug("indexing of %s was cancelled", video.name)
             except (FrameExtractionError, OSError) as error:
                 logger.error("could not index %s: %s", video.name, error)
+    finally:
+        # Dropping queued work is the difference between stopping now and
+        # decoding every remaining episode before noticing the interrupt.
+        pool.shutdown(wait=True, cancel_futures=token.cancelled)
+
+    token.raise_if_cancelled()
     return indexes

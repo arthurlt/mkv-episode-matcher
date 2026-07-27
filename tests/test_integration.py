@@ -377,6 +377,72 @@ class TestDegradedRuns:
         assert result.exit_code != 0
 
 
+class TestInterruption:
+    def _invoke_raising(self, disc, cache_dir, monkeypatch, error):
+        def explode(*_args, **_kwargs):
+            raise error
+
+        monkeypatch.setattr(cli_module, "run_match", explode)
+        return CliRunner().invoke(
+            app,
+            [
+                "match",
+                str(disc),
+                "--series",
+                "Test Precinct",
+                "--season",
+                "2",
+                "--tmdb-key",
+                "k",
+                "--tvdb-key",
+                "k",
+                "--cache",
+                str(cache_dir),
+                "--min-minutes",
+                "0.1",
+            ],
+        )
+
+    def test_a_cancelled_run_exits_with_the_conventional_code(
+        self, disc, cache_dir, monkeypatch, recorded_api
+    ):
+        from mkv_episode_matcher.cancellation import OperationCancelledError
+
+        monkeypatch.setattr(cli_module, "build_http_client", recorded_api.client)
+
+        result = self._invoke_raising(
+            disc, cache_dir, monkeypatch, OperationCancelledError("cancelled")
+        )
+
+        assert result.exit_code == 130
+
+    def test_a_cancelled_run_says_what_happened_instead_of_a_traceback(
+        self, disc, cache_dir, monkeypatch, recorded_api
+    ):
+        from mkv_episode_matcher.cancellation import OperationCancelledError
+
+        monkeypatch.setattr(cli_module, "build_http_client", recorded_api.client)
+
+        result = self._invoke_raising(
+            disc, cache_dir, monkeypatch, OperationCancelledError("cancelled")
+        )
+
+        assert "Interrupted" in result.output
+        assert "Traceback" not in result.output
+
+    def test_a_bare_keyboard_interrupt_also_exits_with_130(
+        self, disc, cache_dir, monkeypatch, recorded_api
+    ):
+        monkeypatch.setattr(cli_module, "build_http_client", recorded_api.client)
+
+        result = self._invoke_raising(disc, cache_dir, monkeypatch, KeyboardInterrupt())
+
+        assert result.exit_code == 130
+
+    def test_a_normal_run_is_unaffected(self, invoke):
+        assert invoke().exit_code == 0
+
+
 class TestClearCache:
     def test_removes_the_cached_indexes(self, invoke, cache_dir):
         invoke()

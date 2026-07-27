@@ -19,6 +19,7 @@ from pathlib import Path
 
 import httpx
 
+from .cancellation import CancellationToken
 from .models import Still
 
 __all__ = ["CacheRoot", "ImageCache", "JsonCache"]
@@ -169,6 +170,7 @@ class ImageCache:
         stills: Sequence[Still] | Iterable[Still],
         *,
         max_workers: int = 8,
+        token: CancellationToken | None = None,
     ) -> dict[str, Path]:
         """Download several stills concurrently, keyed by URL.
 
@@ -177,11 +179,23 @@ class ImageCache:
         unique: dict[str, Still] = {still.url: still for still in stills}
         if not unique:
             return {}
+        token = token or CancellationToken()
+        token.raise_if_cancelled()
+
+        def fetch_one(still: Still) -> Path | None:
+            if token.cancelled:
+                return None
+            return self.fetch(client, still)
+
         results: dict[str, Path] = {}
-        with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(unique)))) as pool:
-            futures = {pool.submit(self.fetch, client, still): url for url, still in unique.items()}
+        pool = ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(unique))))
+        try:
+            futures = {pool.submit(fetch_one, still): url for url, still in unique.items()}
             for future, url in futures.items():
                 path = future.result()
                 if path is not None:
                     results[url] = path
+        finally:
+            pool.shutdown(wait=True, cancel_futures=token.cancelled)
+        token.raise_if_cancelled()
         return results

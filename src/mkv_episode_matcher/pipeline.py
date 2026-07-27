@@ -16,6 +16,7 @@ import httpx
 
 from .assign import assign
 from .cache import CacheRoot, ImageCache, JsonCache
+from .cancellation import CancellationToken
 from .frames import FrameIndexCache, FrameIndexer, IndexParams, build_indexes
 from .metadata import StillCoverage, collect_season, describe_still_coverage
 from .models import Episode, FileScores, MatchResult, MatchStatus
@@ -90,6 +91,7 @@ def run_match(
     cache: CacheRoot,
     tmdb: TmdbClient | None,
     tvdb: TvdbClient | None,
+    token: CancellationToken | None = None,
 ) -> MatchRun:
     """Run the full pipeline for one folder of rips.
 
@@ -103,6 +105,8 @@ def run_match(
         Root of the on-disk caches.
     tmdb, tvdb
         Configured provider clients; at least one is required.
+    token
+        Cancellation token checked between stages and inside every worker pool.
 
     Returns
     -------
@@ -111,6 +115,8 @@ def run_match(
         caller can render a report or export previews.
     """
     started = time.monotonic()
+    token = token or CancellationToken()
+    token.raise_if_cancelled()
 
     paths = find_mkv_files(request.input_dir)
     logger.info("found %d mkv files in %s", len(paths), request.input_dir)
@@ -130,6 +136,7 @@ def run_match(
     )
     coverage = describe_still_coverage(episodes)
 
+    token.raise_if_cancelled()
     images = ImageCache(cache.stills_dir)
     still_hashes = hash_stills(
         [still for episode in episodes for still in episode.stills],
@@ -137,6 +144,7 @@ def run_match(
         images=images,
         hash_cache=JsonCache(cache.path / "still-hashes"),
         max_workers=max(4, request.max_workers),
+        token=token,
     )
     still_paths = {
         url: images.path_for(still)
@@ -146,13 +154,17 @@ def run_match(
     }
 
     indexer = FrameIndexer(
-        FrameIndexCache(cache.frames_dir), request.index_params, hwaccel=request.hwaccel
+        FrameIndexCache(cache.frames_dir),
+        request.index_params,
+        hwaccel=request.hwaccel,
+        token=token,
     )
     indexes = build_indexes(
         indexer, candidates, max_workers=request.max_workers, refresh=request.refresh_index
     )
     unindexed = [video for video in candidates if video.path not in indexes]
 
+    token.raise_if_cancelled()
     scored = score_all(candidates, indexes, episodes, still_hashes, request.scoring)
     if request.refine:
         scored = [_refine(file_scores, indexer, still_hashes, request) for file_scores in scored]
