@@ -1,0 +1,54 @@
+{
+  "status": "success",
+  "data": {
+    "series": {
+      "id": 70328,
+      "name": "Test Precinct"
+    },
+    "episodes": [
+      {
+        "id": 301,
+        "seriesId": 70328,
+        "name": "Chipped Beef",
+        "seasonNumber": 2,
+        "number": 1,
+        "runtime": 48,
+        "image": "/banners/episodes/70328/301.jpg"
+      },
+      {
+        "id": 302,
+        "seriesId": 70328,
+        "name": "Blood Money",
+        "seasonNumber": 2,
+        "number": 2,
+        "runtime": 48,
+        "image": "/banners/episodes/70328/302.jpg"
+      },
+      {
+        "id": 303,
+        "seriesId": 70328,
+        "name": "The Second Oldest Profession",
+        "seasonNumber": 2,
+        "number": 3,
+        "runtime": 48,
+        "image": ""
+      },
+      {
+        "id": 304,
+        "seriesId": 70328,
+        "name": "Rites of Spring",
+        "seasonNumber": 2,
+        "number": 4,
+        "runtime": 48,
+        "image": "/banners/episodes/70328/304.jpg"
+      }
+    ]
+  },
+  "links": {
+    "prev": null,
+    "self": "https://api4.thetvdb.com/v4/series/70328/episodes/default?season=2&page=0",
+    "next": null,
+    "total_items": 4,
+    "page_size": 500
+  }
+}

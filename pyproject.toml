@@ -1,0 +1,69 @@
+[project]
+name = "mkv-episode-matcher"
+version = "0.1.0"
+description = "Identify MakeMKV rips of a known series/season by matching provider screencaps inside the video."
+readme = "README.md"
+authors = [
+    { name = "Cursor Agent", email = "cursoragent@cursor.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.28.1",
+    "imagehash>=4.3.2",
+    "numpy>=2.4.6",
+    "pillow>=12.3.0",
+    "rich>=15.0.0",
+    "typer>=0.27.0",
+]
+
+[project.scripts]
+mkv-episode-matcher = "mkv_episode_matcher.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.11.29,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+exclude-newer = "1 week"
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "src"]
+addopts = "--strict-markers --strict-config --doctest-modules"
+markers = [
+    "ffmpeg: test requires a working ffmpeg/ffprobe installation",
+    "slow: test is slow (real video encoding / decoding)",
+]
+filterwarnings = ["error"]
+log_cli_level = "WARNING"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W", "I", "N", "UP", "B", "A", "C4", "PT", "SIM", "RET", "ARG",
+    "PTH", "RUF", "D", "ANN", "LOG", "G", "TID", "T20",
+]
+ignore = ["D203", "D213", "ANN401"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test names and assertions are the documentation; docstrings and annotations
+# on every case would bury them.
+"tests/**" = ["D", "ANN", "ARG", "PLR2004"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ty.rules]
+unresolved-import = "error"
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.157.0",
+    "prek>=0.4.10",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.22",
+    "ty>=0.0.61",
+]

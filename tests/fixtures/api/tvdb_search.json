@@ -1,0 +1,13 @@
+{
+  "status": "success",
+  "data": [
+    {
+      "objectID": "series-70328",
+      "tvdb_id": "70328",
+      "name": "Test Precinct",
+      "year": "1981",
+      "type": "series",
+      "overview": "A fictional police procedural used as a test fixture."
+    }
+  ]
+}
