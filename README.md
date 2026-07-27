@@ -99,6 +99,7 @@ file without `--force`, and never touches an `ambiguous`, `unmatched`, or
 | `--gap` | `4.0` | How far the runner-up must lose by before a match is called confident. |
 | `--workers` | `4` | Concurrent ffmpeg processes and downloads. |
 | `--refine` | off | Two-stage mode: index coarsely, then re-sample densely around promising hits. |
+| `--episodes` | off | Limit matching to episode numbers on this disc, e.g. `1-7`. |
 | `--hwaccel` | off | ffmpeg hardware decoder (`auto`, `vaapi`, `cuda`, `qsv`, `videotoolbox`…). |
 | `--keyframes-only` | off | Decode only keyframes. Several times faster; cadence follows the encoder's GOP. |
 | `--min-minutes` | `5` | Skip-floor for menus and trailers. |
@@ -162,6 +163,20 @@ WARNING  title_t01.mkv has keyframes only every 20.0s on average, far coarser th
          requested 1.0s sampling; stills falling between them cannot be found. Consider
          dropping --keyframes-only, or adding --refine to re-check promising hits.
 ```
+
+### When only some rips match
+
+If several files on the same disc stay `unmatched` but tightening `--interval` does
+not help, the usual cause is that **provider stills for those episodes do not
+match frames in your rip** (promotional photos, different color grade, or missing
+screencaps)—not sparse sampling. Use `--json` and inspect each file's
+`episode_scores`: distances well above the threshold mean no still landed in the
+video; values around 12–16 may respond to `--threshold` or both TMDB and TVDB keys.
+
+For a disc that only contains part of a season, pass `--episodes 1-7` (or the
+correct range) so assignment only considers episodes that are actually on the
+disc. That does not create evidence where stills are missing, but it avoids
+competing against the rest of the season and makes reports easier to read.
 
 ## How it works
 

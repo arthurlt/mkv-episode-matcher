@@ -17,13 +17,14 @@ from PIL import Image
 from rich.table import Table
 
 from .frames import grab_frame
-from .models import MatchResult, MatchStatus
+from .models import EpisodeScore, FileScores, MatchResult, MatchStatus
 
 __all__ = [
     "build_payload",
     "export_previews",
     "format_timestamp",
     "render_table",
+    "score_entry",
     "table_rows",
     "write_json",
 ]
@@ -54,7 +55,14 @@ def format_timestamp(seconds: float | None) -> str:
     return f"{total // 3600:02d}:{total % 3600 // 60:02d}:{total % 60:02d}"
 
 
-def build_payload(results: Sequence[MatchResult], *, series: str, season: int) -> dict:
+def build_payload(
+    results: Sequence[MatchResult],
+    *,
+    series: str,
+    season: int,
+    file_scores: Sequence[FileScores] | None = None,
+    episode_filter: Sequence[int] | None = None,
+) -> dict:
     """Assemble the JSON report for a run.
 
     Parameters
@@ -63,44 +71,72 @@ def build_payload(results: Sequence[MatchResult], *, series: str, season: int) -
         Final verdicts, one per file.
     series, season
         What was being matched, echoed back for provenance.
+    file_scores
+        Optional per-file episode scores for debugging borderline matches.
+    episode_filter
+        Episode numbers included in matching, if the run was scoped to a disc.
 
     Returns
     -------
     dict
         A JSON-serialisable report with a per-file list and a status summary.
     """
+    scores_by_path = {scores.video.path: scores for scores in file_scores} if file_scores else {}
     files = []
     for result in results:
         hit = result.hit
-        files.append(
-            {
-                "file": result.video.name,
-                "path": str(result.video.path),
-                "duration_s": round(result.video.duration_s, 3) or None,
-                "status": result.status.value,
-                "confidence": result.confidence,
-                "episode": result.episode.code if result.episode else None,
-                "title": result.episode.title if result.episode else None,
-                "distance": hit.distance if hit else None,
-                "dhash_distance": hit.dhash_distance if hit else None,
-                "supporting_stills": result.supporting_stills,
-                "matched_timestamp": round(hit.timestamp, 3) if hit else None,
-                "matched_timestamp_hms": format_timestamp(hit.timestamp if hit else None),
-                "still_url": hit.still.url if hit else None,
-                "still_provider": hit.still.provider if hit else None,
-                "runner_up": result.runner_up.code if result.runner_up else None,
-                "runner_up_cost": result.runner_up_cost,
-                "gap": result.gap,
-                "skip_reason": result.skip_reason.value if result.skip_reason else None,
-                "notes": list(result.notes),
-            }
-        )
+        entry = {
+            "file": result.video.name,
+            "path": str(result.video.path),
+            "duration_s": round(result.video.duration_s, 3) or None,
+            "status": result.status.value,
+            "confidence": result.confidence,
+            "episode": result.episode.code if result.episode else None,
+            "title": result.episode.title if result.episode else None,
+            "distance": hit.distance if hit else None,
+            "dhash_distance": hit.dhash_distance if hit else None,
+            "supporting_stills": result.supporting_stills,
+            "matched_timestamp": round(hit.timestamp, 3) if hit else None,
+            "matched_timestamp_hms": format_timestamp(hit.timestamp if hit else None),
+            "still_url": hit.still.url if hit else None,
+            "still_provider": hit.still.provider if hit else None,
+            "runner_up": result.runner_up.code if result.runner_up else None,
+            "runner_up_cost": result.runner_up_cost,
+            "gap": result.gap,
+            "skip_reason": result.skip_reason.value if result.skip_reason else None,
+            "notes": list(result.notes),
+        }
+        detailed = scores_by_path.get(result.video.path)
+        if detailed is not None:
+            entry["episode_scores"] = [score_entry(score) for score in detailed.scores]
+        files.append(entry)
 
     summary = {status.value: 0 for status in MatchStatus}
     for result in results:
         summary[result.status.value] += 1
 
-    return {"series": series, "season": season, "summary": summary, "files": files}
+    payload: dict = {"series": series, "season": season, "summary": summary, "files": files}
+    if episode_filter:
+        payload["episode_filter"] = [
+            f"S{season:02d}E{number:02d}" for number in sorted(episode_filter)
+        ]
+    return payload
+
+
+def score_entry(score: EpisodeScore) -> dict:
+    """Serialise one episode's score against a single file for JSON reports."""
+    hit = score.best_hit
+    cost = score.cost
+    return {
+        "episode": score.episode.code,
+        "title": score.episode.title,
+        "cost": None if cost == float("inf") else round(cost, 3),
+        "distance": hit.distance if hit else None,
+        "dhash_distance": hit.dhash_distance if hit else None,
+        "supporting_stills": score.supporting_stills,
+        "matched_timestamp": round(hit.timestamp, 3) if hit else None,
+        "still_url": hit.still.url if hit else None,
+    }
 
 
 def write_json(path: Path, payload: dict) -> Path:
