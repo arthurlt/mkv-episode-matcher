@@ -20,8 +20,11 @@ dependencies = [
 mkv-episode-matcher = "mkv_episode_matcher.cli:app"
 
 [build-system]
-requires = ["uv_build>=0.11.32,<0.12.0"]
+requires = ["uv_build>=0.11.29,<0.12.0"]
 build-backend = "uv_build"
+
+[tool.uv]
+exclude-newer = "1 week"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "src"]
@@ -57,10 +60,10 @@ unresolved-import = "error"
 
 [dependency-groups]
 dev = [
-    "hypothesis>=6.161.5",
-    "prek>=0.4.11",
+    "hypothesis>=6.157.0",
+    "prek>=0.4.10",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
-    "ruff>=0.16.0",
-    "ty>=0.0.63",
+    "ruff>=0.15.22",
+    "ty>=0.0.61",
 ]
