@@ -17,6 +17,7 @@ import httpx
 from .assign import assign
 from .cache import CacheRoot, ImageCache, JsonCache
 from .cancellation import CancellationToken
+from .episode_filter import filter_episodes_by_number
 from .frames import FrameIndexCache, FrameIndexer, IndexParams, build_indexes
 from .metadata import StillCoverage, collect_season, describe_still_coverage
 from .models import Episode, FileScores, MatchResult, MatchStatus
@@ -62,6 +63,7 @@ class MatchRequest:
     refine: bool = False
     refine_interval_s: float = 0.25
     refine_window_s: float = 3.0
+    episode_numbers: frozenset[int] | None = None
 
 
 @dataclass(slots=True)
@@ -70,9 +72,11 @@ class MatchRun:
 
     results: list[MatchResult]
     episodes: list[Episode]
+    file_scores: list[FileScores]
     still_paths: dict[str, Path]
     coverage: StillCoverage
     elapsed_s: float
+    episode_numbers: frozenset[int] | None = None
 
     @property
     def unresolved(self) -> list[MatchResult]:
@@ -134,6 +138,8 @@ def run_match(
         year=request.year,
         tvdb_extended=request.tvdb_extended,
     )
+    if request.episode_numbers is not None:
+        episodes = filter_episodes_by_number(episodes, request.episode_numbers)
     coverage = describe_still_coverage(episodes)
 
     token.raise_if_cancelled()
@@ -176,9 +182,11 @@ def run_match(
     return MatchRun(
         results=results,
         episodes=episodes,
+        file_scores=scored,
         still_paths=still_paths,
         coverage=coverage,
         elapsed_s=elapsed,
+        episode_numbers=request.episode_numbers,
     )
 
 

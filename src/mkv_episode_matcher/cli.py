@@ -18,6 +18,7 @@ from .cancellation import (
     OperationCancelledError,
     cancel_on_sigint,
 )
+from .episode_filter import parse_episode_numbers
 from .frames import IndexParams
 from .logging_utils import configure_logging
 from .metadata import describe_still_coverage
@@ -163,6 +164,16 @@ def match(
     refine_interval: Annotated[
         float, typer.Option("--refine-interval", min=0.01, help="Interval for the refine pass.")
     ] = 0.25,
+    episodes: Annotated[
+        str | None,
+        typer.Option(
+            "--episodes",
+            help=(
+                "Limit matching to these episode numbers, e.g. 1-7 for a seven-episode disc. "
+                "Comma-separated numbers and inclusive ranges are supported."
+            ),
+        ),
+    ] = None,
     no_tmdb: Annotated[bool, typer.Option("--no-tmdb", help="Do not query TMDB.")] = False,
     no_tvdb: Annotated[bool, typer.Option("--no-tvdb", help="Do not query TheTVDB.")] = False,
     json_out: Annotated[
@@ -225,6 +236,13 @@ def match(
                 token=cancellation,
             )
 
+        episode_numbers = None
+        if episodes is not None:
+            try:
+                episode_numbers = parse_episode_numbers(episodes)
+            except ValueError as error:
+                raise typer.BadParameter(str(error)) from error
+
         request = MatchRequest(
             input_dir=input_dir,
             series=series,
@@ -249,6 +267,7 @@ def match(
             refresh_index=refresh,
             refine=refine,
             refine_interval_s=refine_interval,
+            episode_numbers=episode_numbers,
         )
 
         try:
@@ -300,7 +319,17 @@ def _emit(
     )
 
     if json_out is not None:
-        write_json(json_out, build_payload(run.results, series=series, season=season))
+        filter_list = sorted(run.episode_numbers) if run.episode_numbers is not None else None
+        write_json(
+            json_out,
+            build_payload(
+                run.results,
+                series=series,
+                season=season,
+                file_scores=run.file_scores,
+                episode_filter=filter_list,
+            ),
+        )
         console.print(f"JSON report: {json_out}")
 
     if previews is not None:

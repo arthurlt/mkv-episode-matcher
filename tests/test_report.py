@@ -9,6 +9,8 @@ import pytest
 
 from mkv_episode_matcher.models import (
     Episode,
+    EpisodeScore,
+    FileScores,
     MatchResult,
     MatchStatus,
     SkipReason,
@@ -127,6 +129,42 @@ class TestPayload:
         write_json(target, build_payload([matched_result()], series="X", season=2))
 
         assert json.loads(target.read_text())["files"][0]["episode"] == "S02E01"
+
+    def test_includes_per_episode_scores_when_provided(self):
+        episode_a = Episode(season=2, number=1, title="A")
+        episode_b = Episode(season=2, number=4, title="D")
+        hit = StillHit(
+            still=Still("tmdb", "https://image.tmdb.org/t/p/w780/a.jpg"),
+            distance=8,
+            timestamp=100.0,
+            dhash_distance=5,
+        )
+        file_scores = [
+            FileScores(
+                video=video(),
+                scores=(
+                    EpisodeScore(episode=episode_a, best_hit=hit, supporting_stills=1, cost=8.0),
+                    EpisodeScore(
+                        episode=episode_b, best_hit=None, supporting_stills=0, cost=float("inf")
+                    ),
+                ),
+            )
+        ]
+        entry = build_payload(
+            [MatchResult(video=video(), status=MatchStatus.UNMATCHED)],
+            series="X",
+            season=2,
+            file_scores=file_scores,
+            episode_filter=[1, 4],
+        )["files"][0]
+
+        assert len(entry["episode_scores"]) == 2
+        assert entry["episode_scores"][0]["distance"] == 8
+        assert entry["episode_scores"][1]["cost"] is None
+
+    def test_episode_filter_is_echoed_at_top_level(self):
+        payload = build_payload([matched_result()], series="X", season=2, episode_filter=[1, 2, 3])
+        assert payload["episode_filter"] == ["S02E01", "S02E02", "S02E03"]
 
     def test_write_json_creates_missing_directories(self, tmp_path):
         target = tmp_path / "nested" / "report.json"
