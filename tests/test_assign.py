@@ -372,3 +372,59 @@ class TestAssign:
 
         assert result.status is MatchStatus.MATCHED
         assert result.episode.number == 2
+
+
+class TestNccAssignment:
+    def test_rejects_a_weak_ncc_hit_via_the_unmatched_column(self):
+        still = Still("tmdb", "https://img/1.jpg")
+        hit = StillHit(still=still, distance=16, timestamp=10.0, dhash_distance=4)
+        scored = [
+            FileScores(
+                video=video("weak.mkv"),
+                scores=(
+                    EpisodeScore(
+                        episode=episode(1),
+                        best_hit=hit,
+                        supporting_stills=0,
+                        cost=1.0 - 0.55,
+                        ncc=0.55,
+                    ),
+                ),
+            )
+        ]
+
+        result = assign(scored, config=ScoringConfig(verify_threshold=0.65, verify_gap=0.05))[0]
+
+        assert result.status is MatchStatus.UNMATCHED
+        assert "NCC" in result.notes[0]
+
+    def test_matches_a_strong_unique_ncc_hit(self):
+        still = Still("tmdb", "https://img/1.jpg")
+        hit = StillHit(still=still, distance=8, timestamp=10.0, dhash_distance=4)
+        scored = [
+            FileScores(
+                video=video("a.mkv"),
+                scores=(
+                    EpisodeScore(
+                        episode=episode(1),
+                        best_hit=hit,
+                        supporting_stills=1,
+                        cost=1.0 - 0.80,
+                        ncc=0.80,
+                    ),
+                    EpisodeScore(
+                        episode=episode(2),
+                        best_hit=StillHit(still, 14, 20.0, 8),
+                        supporting_stills=0,
+                        cost=1.0 - 0.40,
+                        ncc=0.40,
+                    ),
+                ),
+            )
+        ]
+
+        result = assign(scored, config=ScoringConfig(verify_threshold=0.65, verify_gap=0.05))[0]
+
+        assert result.status is MatchStatus.MATCHED
+        assert result.episode.number == 1
+        assert result.ncc == pytest.approx(0.80)

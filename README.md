@@ -95,8 +95,12 @@ file without `--force`, and never touches an `ambiguous`, `unmatched`, or
 | Option | Default | What it does |
 |---|---|---|
 | `--interval` | `1.0` | Seconds between sampled frames. Denser finds more, costs more decode time. |
-| `--threshold` | `12` | Maximum pHash Hamming distance (of 64 bits) for a still to count as found. |
-| `--gap` | `4.0` | How far the runner-up must lose by before a match is called confident. |
+| `--threshold` | `12` | Maximum pHash Hamming distance (of 64 bits) for a still to count as found when `--no-verify`. |
+| `--gap` | `4.0` | How far the runner-up must lose by before a match is called confident (pHash mode). |
+| `--verify` / `--no-verify` | on | Dense NCC verification of pHash nominees, with aspect-aware crop search. |
+| `--verify-threshold` | `0.65` | Minimum NCC for a verified hit. |
+| `--verify-gap` | `0.05` | Mutual-best margin in NCC cost units (`cost = 1 - ncc`). |
+| `--verify-candidates` | `8` | Temporally separated pHash peaks to re-check per still. |
 | `--workers` | `4` | Concurrent ffmpeg processes and downloads. |
 | `--refine` | off | Two-stage mode: index coarsely, then re-sample densely around promising hits. |
 | `--episodes` | off | Limit matching to episode numbers on this disc, e.g. `1-7`. |

@@ -26,6 +26,7 @@ from .probe import DurationFilter, find_mkv_files, inventory
 from .score_visual import ScoringConfig, hash_stills, score_all, score_episode
 from .tmdb_client import TmdbClient
 from .tvdb_client import TvdbClient
+from .verify import apply_still_uniqueness, load_still_images, verify_scores
 
 __all__ = ["MatchRequest", "MatchRun", "run_match"]
 
@@ -174,6 +175,26 @@ def run_match(
     scored = score_all(candidates, indexes, episodes, still_hashes, request.scoring)
     if request.refine:
         scored = [_refine(file_scores, indexer, still_hashes, request) for file_scores in scored]
+
+    if request.scoring.verify and scored:
+        token.raise_if_cancelled()
+        still_images = load_still_images(still_paths)
+        logger.info(
+            "verifying %d files with NCC (%d candidates/still)",
+            len(scored),
+            request.scoring.verify_candidates,
+        )
+        scored = verify_scores(
+            scored,
+            indexes,
+            episodes,
+            still_hashes,
+            still_images,
+            indexer,
+            request.scoring,
+            token=token,
+        )
+        scored = apply_still_uniqueness(scored, floor=min(0.5, request.scoring.verify_threshold))
 
     results = assign(scored, config=request.scoring, skipped=skipped, unindexed=unindexed)
     elapsed = time.monotonic() - started

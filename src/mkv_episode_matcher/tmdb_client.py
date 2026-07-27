@@ -82,8 +82,19 @@ class TmdbClient(JsonApiClient):
             params["api_key"] = self.api_key
         return params, headers
 
-    def _get(self, path: str, *, extra: QueryParams | None = None, cache_key: str) -> dict:
+    def _get(
+        self,
+        path: str,
+        *,
+        extra: QueryParams | None = None,
+        cache_key: str,
+        include_language: bool = True,
+    ) -> dict:
         params, headers = self._auth()
+        if not include_language:
+            # Episode stills are usually tagged iso_639_1=null; sending
+            # language=en-US filters them all out and returns an empty list.
+            params.pop("language", None)
         params.update(extra or {})
         return self.get_json(path, params=params, headers=headers, cache_key=cache_key)
 
@@ -159,7 +170,11 @@ class TmdbClient(JsonApiClient):
         try:
             payload = self._get(
                 f"/tv/{series_id}/season/{season}/episode/{number}/images",
-                cache_key=f"tmdb/images/{series_id}/{season}/{number}",
+                extra={"include_image_language": "en,null"},
+                # v2: omit language= so null-tagged stills are returned. Bumped
+                # so caches that stored the old empty responses are not reused.
+                cache_key=f"tmdb/images/v2/{series_id}/{season}/{number}",
+                include_language=False,
             )
         except ProviderError as error:
             logger.warning("no tmdb images for S%02dE%02d (%s)", season, number, error)
