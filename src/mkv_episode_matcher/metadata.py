@@ -145,6 +145,7 @@ def _merge(sources: list[list[Episode]]) -> list[Episode]:
     by_number: dict[int, Episode] = {}
     stills_by_number: dict[int, tuple[Still, ...]] = {}
     providers_by_number: dict[int, tuple[str, ...]] = {}
+    runtimes_by_number: dict[int, list[int]] = {}
 
     for episodes in sources:
         for episode in episodes:
@@ -154,17 +155,23 @@ def _merge(sources: list[list[Episode]]) -> list[Episode]:
                 by_number[number] = episode
             stills_by_number[number] = stills_by_number.get(number, ()) + episode.stills
             providers_by_number[number] = providers_by_number.get(number, ()) + episode.providers
+            if episode.runtime_minutes:
+                runtimes_by_number.setdefault(number, []).append(episode.runtime_minutes)
 
     merged = []
     for number in sorted(by_number):
         base = by_number[number]
+        runtimes = runtimes_by_number.get(number, [])
+        # Average when providers disagree (e.g. 45 vs 46 min) so disc rips that
+        # land between the rounded minute values still corroborate cleanly.
+        runtime = round(sum(runtimes) / len(runtimes)) if runtimes else base.runtime_minutes
         merged.append(
             Episode(
                 season=base.season,
                 number=number,
                 title=base.title,
                 stills=dedupe_stills(stills_by_number[number]),
-                runtime_minutes=base.runtime_minutes,
+                runtime_minutes=runtime,
                 providers=tuple(dict.fromkeys(providers_by_number[number])),
             )
         )

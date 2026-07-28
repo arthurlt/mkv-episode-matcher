@@ -30,7 +30,7 @@ from .models import (
 )
 from .score_visual import ScoringConfig
 
-__all__ = ["assign", "confidence_of", "solve_assignment"]
+__all__ = ["assign", "confidence_of", "confidence_of_ncc", "solve_assignment"]
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +153,7 @@ def assign(
     config: ScoringConfig,
     skipped: dict[Path, SkipReason] | None = None,
     unindexed: Sequence[VideoFile] = (),
+    closed_world: bool = False,
 ) -> list[MatchResult]:
     """Turn per-file episode scores into final, mutually consistent verdicts.
 
@@ -167,6 +168,10 @@ def assign(
         Files excluded before matching, with the reason.
     unindexed
         Files that could not be decoded, reported as unmatched.
+    closed_world
+        When true (``--episodes`` filter), soft-threshold NCC hits may be
+        accepted if the mutual-best soft gap holds. Full-season runs keep the
+        hard threshold so weak cross-episode collisions stay unmatched.
 
     Returns
     -------
@@ -176,7 +181,7 @@ def assign(
     results: list[MatchResult] = []
 
     if scored:
-        results.extend(_assign_scored(scored, config))
+        results.extend(_assign_scored(scored, config, closed_world=closed_world))
 
     for path, reason in (skipped or {}).items():
         results.append(
@@ -200,25 +205,70 @@ def assign(
     return sorted(results, key=lambda result: result.video.name)
 
 
-def _assign_scored(scored: Sequence[FileScores], config: ScoringConfig) -> list[MatchResult]:
+def _assign_scored(
+    scored: Sequence[FileScores],
+    config: ScoringConfig,
+    *,
+    closed_world: bool = False,
+) -> list[MatchResult]:
     """Solve the assignment and apply the mutual-best decision rules."""
     episodes = _episode_axis(scored)
+    uses_ncc = _uses_ncc(scored)
     cost_matrix = np.array(
         [
             [
-                score.cost if _feasible(score, config) else INF
+                score.cost if _feasible(score, config, closed_world=closed_world) else INF
                 for score in _ordered(file_scores, episodes)
             ]
             for file_scores in scored
         ],
         dtype=float,
     )
+
+    reject_cost = None
+    if uses_ncc:
+        # Extra column lets a file stay unmatched rather than absorb a weak
+        # pairing by elimination. Cost equals the feasibility boundary.
+        floor = (
+            config.verify_soft_threshold
+            if closed_world
+            else config.verify_threshold
+        )
+        reject_cost = 1.0 - floor
+        cost_matrix = np.concatenate(
+            [
+                cost_matrix,
+                np.full((cost_matrix.shape[0], 1), reject_cost, dtype=float),
+            ],
+            axis=1,
+        )
+
     assignment = solve_assignment(cost_matrix)
+    episode_columns = len(episodes)
 
     results = []
     for row, file_scores in enumerate(scored):
-        results.append(_verdict(file_scores, cost_matrix, row, assignment[row], episodes, config))
+        column = assignment[row]
+        if reject_cost is not None and column is not None and column >= episode_columns:
+            column = None
+        results.append(
+            _verdict(
+                file_scores,
+                cost_matrix[:, :episode_columns],
+                row,
+                column,
+                episodes,
+                config,
+                uses_ncc=uses_ncc,
+                closed_world=closed_world,
+            )
+        )
     return results
+
+
+def _uses_ncc(scored: Sequence[FileScores]) -> bool:
+    """Return whether verification has attached NCC scores to use for decisions."""
+    return any(score.ncc is not None for file_scores in scored for score in file_scores.scores)
 
 
 def _episode_axis(scored: Sequence[FileScores]) -> list[Episode]:
@@ -247,13 +297,36 @@ def _ordered(file_scores: FileScores, episodes: Sequence[Episode]) -> list[Episo
     ]
 
 
-def _feasible(score: EpisodeScore, config: ScoringConfig) -> bool:
+def _feasible(
+    score: EpisodeScore, config: ScoringConfig, *, closed_world: bool = False
+) -> bool:
     """Return whether a score is a usable hit at all.
 
-    Feasibility is judged on the final cost, so the dHash collision penalty can
-    push a suspicious pHash hit out of contention entirely.
+    With NCC verification, feasibility is ``ncc >= verify_threshold``, or
+    ``ncc >= verify_soft_threshold`` when matching a closed episode set.
+    Otherwise it is judged on the pHash cost, so the dHash collision penalty
+    can push a suspicious hit out of contention entirely.
     """
+    if score.ncc is not None:
+        floor = (
+            config.verify_soft_threshold
+            if closed_world
+            else config.verify_threshold
+        )
+        return score.ncc >= floor
     return score.best_hit is not None and score.cost <= config.match_threshold
+
+
+def _decision_gap(
+    config: ScoringConfig,
+    *,
+    uses_ncc: bool,
+    soft: bool = False,
+) -> float:
+    """Return the mutual-best margin for the active cost regime."""
+    if not uses_ncc:
+        return config.decision_gap
+    return config.verify_soft_gap if soft else config.verify_gap
 
 
 def _verdict(
@@ -263,6 +336,9 @@ def _verdict(
     column: int | None,
     episodes: Sequence[Episode],
     config: ScoringConfig,
+    *,
+    uses_ncc: bool = False,
+    closed_world: bool = False,
 ) -> MatchResult:
     """Decide one file's status from the assignment and the surrounding costs."""
     video = file_scores.video
@@ -271,29 +347,71 @@ def _verdict(
     best = ranked[0] if ranked else None
     runner_up = ranked[1] if len(ranked) > 1 else None
     best_hit = best.best_hit if best else None
+    soft = bool(
+        uses_ncc
+        and closed_world
+        and best is not None
+        and best.ncc is not None
+        and best.ncc < config.verify_threshold
+    )
+    gap_needed = _decision_gap(config, uses_ncc=uses_ncc, soft=soft)
 
-    if best is None or best_hit is None or not _feasible(best, config):
+    if best is None or best_hit is None or not _feasible(best, config, closed_world=closed_world):
+        note = (
+            "no still verified above the NCC threshold"
+            if uses_ncc
+            else "no still matched this file below the threshold"
+        )
         return MatchResult(
             video=video,
             status=MatchStatus.UNMATCHED,
             runner_up=best.episode if best and best.best_hit else None,
             runner_up_cost=None if best is None or best.cost == INF else best.cost,
-            notes=["no still matched this file below the threshold"],
+            ncc=best.ncc if best else None,
+            notes=[note],
         )
 
     file_gap = INF if runner_up is None else runner_up.cost - best.cost
     episode_gap = _episode_side_gap(cost_matrix, row, ranked[0], episodes)
     chosen_by_solver = column is not None and episodes[column].number == best.episode.number
-    confidence = confidence_of(best.cost, min(file_gap, episode_gap), config)
+    if uses_ncc and best.ncc is not None:
+        confidence = confidence_of_ncc(
+            best.ncc,
+            min(file_gap, episode_gap),
+            config,
+            floor=config.verify_soft_threshold if soft else config.verify_threshold,
+        )
+    else:
+        confidence = confidence_of(best.cost, min(file_gap, episode_gap), config)
 
-    if chosen_by_solver and file_gap >= config.decision_gap and episode_gap >= config.decision_gap:
-        logger.info(
-            "matched %s -> %s (distance %d at %.1fs, %d supporting stills)",
-            video.name,
-            best.episode.code,
-            best_hit.distance,
-            best_hit.timestamp,
-            best.supporting_stills,
+    if chosen_by_solver and file_gap >= gap_needed and episode_gap >= gap_needed:
+        if uses_ncc and best.ncc is not None:
+            logger.info(
+                "matched %s -> %s (ncc %.3f at %.1fs, distance %d, %d supporting stills)",
+                video.name,
+                best.episode.code,
+                best.ncc,
+                best_hit.timestamp,
+                best_hit.distance,
+                best.supporting_stills,
+            )
+        else:
+            logger.info(
+                "matched %s -> %s (distance %d at %.1fs, %d supporting stills)",
+                video.name,
+                best.episode.code,
+                best_hit.distance,
+                best_hit.timestamp,
+                best.supporting_stills,
+            )
+        notes = (
+            [
+                f"accepted under soft NCC threshold "
+                f"({best.ncc:.3f} < {config.verify_threshold:.2f}; "
+                f"closed episode set)"
+            ]
+            if soft and best.ncc is not None
+            else []
         )
         return MatchResult(
             video=video,
@@ -305,6 +423,8 @@ def _verdict(
             runner_up_cost=None if runner_up is None or runner_up.cost == INF else runner_up.cost,
             supporting_stills=best.supporting_stills,
             confidence=confidence,
+            ncc=best.ncc,
+            notes=notes,
         )
 
     notes = []
@@ -313,12 +433,12 @@ def _verdict(
             f"another file is a better fit for {best.episode.code}; "
             "the global assignment moved this one"
         )
-    if file_gap < config.decision_gap and runner_up is not None:
+    if file_gap < gap_needed and runner_up is not None:
         notes.append(
             f"{best.episode.code} and {runner_up.episode.code} are within "
-            f"{file_gap:.1f} of each other"
+            f"{file_gap:.3f} of each other"
         )
-    if episode_gap < config.decision_gap:
+    if episode_gap < gap_needed:
         notes.append(f"another file matches {best.episode.code} almost as well")
 
     logger.info("ambiguous %s: %s", video.name, "; ".join(notes))
@@ -332,12 +452,13 @@ def _verdict(
         runner_up_cost=None if runner_up is None or runner_up.cost == INF else runner_up.cost,
         supporting_stills=best.supporting_stills,
         confidence=confidence,
+        ncc=best.ncc,
         notes=notes or [f"best candidate is {best.episode.code}"],
     )
 
 
 def confidence_of(cost: float, gap: float, config: ScoringConfig) -> float:
-    """Rate a candidate from 0 to 1 on its two independent weaknesses.
+    """Rate a pHash candidate from 0 to 1 on its two independent weaknesses.
 
     This is an ordering aid for triage, not a probability. It is the weaker of
     two margins: how far below the accept threshold the hit landed, and how
@@ -346,7 +467,7 @@ def confidence_of(cost: float, gap: float, config: ScoringConfig) -> float:
 
     Examples
     --------
-    >>> config = ScoringConfig(match_threshold=12, decision_gap=4.0)
+    >>> config = ScoringConfig(match_threshold=12, decision_gap=4.0, verify=False)
     >>> confidence_of(0.0, 20.0, config)
     1.0
     >>> confidence_of(12.0, 20.0, config)
@@ -360,6 +481,40 @@ def confidence_of(cost: float, gap: float, config: ScoringConfig) -> float:
         distance_margin = 1.0 - cost / config.match_threshold
     gap_margin = 1.0 if config.decision_gap <= 0 else gap / config.decision_gap
     return round(max(0.0, min(1.0, distance_margin, gap_margin)), 3)
+
+
+def confidence_of_ncc(
+    ncc_value: float,
+    gap: float,
+    config: ScoringConfig,
+    *,
+    floor: float | None = None,
+) -> float:
+    """Rate an NCC-verified candidate from 0 to 1.
+
+    Parameters
+    ----------
+    floor
+        NCC feasibility floor used for the distance margin. Defaults to
+        ``verify_threshold``; soft closed-world accepts pass the soft floor so
+        confidence is not stuck at zero for every gray-zone match.
+
+    Examples
+    --------
+    >>> config = ScoringConfig(verify_threshold=0.65, verify_gap=0.05)
+    >>> confidence_of_ncc(1.0, 0.2, config)
+    1.0
+    >>> confidence_of_ncc(0.65, 0.2, config)
+    0.0
+    """
+    threshold = config.verify_threshold if floor is None else floor
+    span = 1.0 - threshold
+    if span <= 0:
+        ncc_margin = 1.0 if ncc_value >= threshold else 0.0
+    else:
+        ncc_margin = (ncc_value - threshold) / span
+    gap_margin = 1.0 if config.verify_gap <= 0 else gap / config.verify_gap
+    return round(max(0.0, min(1.0, ncc_margin, gap_margin)), 3)
 
 
 def _episode_side_gap(

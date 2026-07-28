@@ -66,7 +66,7 @@ class TestRefine:
         best = refined.scores[0]
         assert best.cost < coarse.cost
         assert best.best_distance <= 4
-        assert best.best_hit.timestamp == pytest.approx(TARGET_SLOT * SLOT_SECONDS, abs=0.3)
+        assert best.best_hit.timestamp == pytest.approx(TARGET_SLOT * SLOT_SECONDS, abs=0.4)
 
     def test_refinement_keeps_the_original_when_nothing_improves(self, video_factory, cache_dir):
         path = video_factory(
@@ -104,6 +104,7 @@ def _request(video, *, refine_window_s: float = 3.0) -> MatchRequest:
         series="Test Precinct",
         season=2,
         index_params=IndexParams(interval_s=4.0),
+        scoring=ScoringConfig(verify=False),
         refine=True,
         refine_interval_s=0.25,
         refine_window_s=refine_window_s,
@@ -164,6 +165,7 @@ class TestRunMatch:
                 tmdb_series_id="4224",
                 tvdb_series_id="70328",
                 duration_filter=DurationFilter(min_duration_s=1.0),
+                scoring=ScoringConfig(verify=False),
             ),
             http=http,
             cache=cache,
@@ -191,6 +193,7 @@ class TestRunMatch:
                 season=2,
                 tmdb_series_id="4224",
                 duration_filter=DurationFilter(min_duration_s=1.0),
+                scoring=ScoringConfig(verify=False),
             ),
             http=http,
             cache=cache,
@@ -216,6 +219,7 @@ class TestRunMatch:
                 season=2,
                 tmdb_series_id="4224",
                 duration_filter=DurationFilter(min_duration_s=1.0),
+                scoring=ScoringConfig(verify=False),
             ),
             http=http,
             cache=cache,

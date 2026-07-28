@@ -95,8 +95,12 @@ file without `--force`, and never touches an `ambiguous`, `unmatched`, or
 | Option | Default | What it does |
 |---|---|---|
 | `--interval` | `1.0` | Seconds between sampled frames. Denser finds more, costs more decode time. |
-| `--threshold` | `12` | Maximum pHash Hamming distance (of 64 bits) for a still to count as found. |
-| `--gap` | `4.0` | How far the runner-up must lose by before a match is called confident. |
+| `--threshold` | `12` | Maximum pHash Hamming distance (of 64 bits) for a still to count as found when `--no-verify`. |
+| `--gap` | `4.0` | How far the runner-up must lose by before a match is called confident (pHash mode). |
+| `--verify` / `--no-verify` | on | Dense NCC verification of pHash nominees, with aspect-aware crop search. |
+| `--verify-threshold` | `0.65` | Minimum NCC for a verified hit. |
+| `--verify-gap` | `0.05` | Mutual-best margin in NCC cost units (`cost = 1 - ncc`). |
+| `--verify-candidates` | `8` | Temporally separated pHash peaks to re-check per still. |
 | `--workers` | `4` | Concurrent ffmpeg processes and downloads. |
 | `--refine` | off | Two-stage mode: index coarsely, then re-sample densely around promising hits. |
 | `--episodes` | off | Limit matching to episode numbers on this disc, e.g. `1-7`. |
@@ -173,10 +177,13 @@ screencaps)—not sparse sampling. Use `--json` and inspect each file's
 `episode_scores`: distances well above the threshold mean no still landed in the
 video; values around 12–16 may respond to `--threshold` or both TMDB and TVDB keys.
 
-For a disc that only contains part of a season, pass `--episodes 1-7` (or the
-correct range) so assignment only considers episodes that are actually on the
-disc. That does not create evidence where stills are missing, but it avoids
-competing against the rest of the season and makes reports easier to read.
+For a disc that only contains part of a season, pass `--episodes 1-7` or
+`--episodes 8-12` so assignment only considers episodes on that disc. With an
+episode filter the matcher treats the disc as a closed set: gray-zone NCC hits
+can be accepted when mutual-best margins hold, existing verifications are
+nudged by episode runtime, and any leftover unmatched files are filled in when
+runtimes form a unique bijection. That is how discs with sparse provider stills
+(Ted Lasso S2 Disc 2) still resolve after the visual pass.
 
 ## How it works
 

@@ -336,7 +336,7 @@ class TestDegradedRuns:
     def test_demanding_an_impossible_gap_makes_everything_ambiguous(self, invoke, tmp_path):
         report = tmp_path / "report.json"
 
-        invoke("--gap", "1000", "--json", str(report))
+        invoke("--gap", "1000", "--verify-gap", "10", "--json", str(report))
 
         summary = json.loads(report.read_text())["summary"]
         assert summary["matched"] == 0

@@ -95,6 +95,7 @@ def build_payload(
             "title": result.episode.title if result.episode else None,
             "distance": hit.distance if hit else None,
             "dhash_distance": hit.dhash_distance if hit else None,
+            "ncc": None if result.ncc is None else round(result.ncc, 3),
             "supporting_stills": result.supporting_stills,
             "matched_timestamp": round(hit.timestamp, 3) if hit else None,
             "matched_timestamp_hms": format_timestamp(hit.timestamp if hit else None),
@@ -133,6 +134,7 @@ def score_entry(score: EpisodeScore) -> dict:
         "cost": None if cost == float("inf") else round(cost, 3),
         "distance": hit.distance if hit else None,
         "dhash_distance": hit.dhash_distance if hit else None,
+        "ncc": None if score.ncc is None else round(score.ncc, 3),
         "supporting_stills": score.supporting_stills,
         "matched_timestamp": round(hit.timestamp, 3) if hit else None,
         "still_url": hit.still.url if hit else None,
@@ -155,6 +157,7 @@ TABLE_COLUMNS = (
     "Episode",
     "Title",
     "Dist",
+    "NCC",
     "Stills",
     "Found at",
     "Runner-up",
@@ -179,6 +182,7 @@ def table_rows(results: Sequence[MatchResult]) -> list[tuple[str, ...]]:
                 result.episode.code if result.episode else "-",
                 result.episode.title if result.episode else "-",
                 str(hit.distance) if hit else "-",
+                "-" if result.ncc is None else f"{result.ncc:.3f}",
                 str(result.supporting_stills) if result.supporting_stills else "-",
                 format_timestamp(hit.timestamp if hit else None),
                 result.runner_up.code if result.runner_up else "-",
@@ -190,7 +194,7 @@ def table_rows(results: Sequence[MatchResult]) -> list[tuple[str, ...]]:
 
 #: Columns dropped entirely when no row has anything to say in them, which
 #: keeps the table readable in a narrow terminal.
-_OPTIONAL_COLUMNS = frozenset({"Title", "Conf", "Stills", "Runner-up", "Notes"})
+_OPTIONAL_COLUMNS = frozenset({"Title", "Conf", "NCC", "Stills", "Runner-up", "Notes"})
 _EMPTY_CELLS = frozenset({"", "-"})
 
 

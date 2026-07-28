@@ -185,14 +185,19 @@ class EpisodeScore:
         How many distinct stills of this episode landed at or below the hit
         threshold. Multi-still agreement is stronger evidence than one hit.
     cost
-        Assignment cost: the best distance, discounted slightly for
-        multi-still agreement. Lower is better.
+        Assignment cost. With pHash-only scoring this is the best Hamming
+        distance (discounted for agreement). After NCC verification it is
+        ``1 - ncc``. Lower is better.
+    ncc
+        Best normalized cross-correlation from the verification pass, or
+        ``None`` when verification did not run for this pair.
     """
 
     episode: Episode
     best_hit: StillHit | None
     supporting_stills: int
     cost: float
+    ncc: float | None = None
 
     @property
     def best_distance(self) -> int | None:
@@ -225,6 +230,7 @@ class MatchResult:
     runner_up_cost: float | None = None
     supporting_stills: int = 0
     confidence: float | None = None
+    ncc: float | None = None
     skip_reason: SkipReason | None = None
     notes: list[str] = field(default_factory=list)
 
@@ -239,8 +245,8 @@ class MatchResult:
     def renameable(self) -> bool:
         """Return whether this result may be auto-renamed.
 
-        Only a confident, visually evidenced match qualifies; there is no
-        duration-only path to a rename.
+        Confident ``matched`` verdicts qualify, including closed-world unique
+        runtime fallbacks when provider stills were inconclusive.
 
         Examples
         --------

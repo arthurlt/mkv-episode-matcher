@@ -30,6 +30,7 @@ __all__ = [
     "score_all",
     "score_episode",
     "score_file",
+    "search_candidates",
 ]
 
 logger = logging.getLogger(__name__)
@@ -44,10 +45,11 @@ class ScoringConfig:
     match_threshold
         Maximum pHash Hamming distance (``T``) for a still to count as a hit.
         Around 10-12 of 64 bits tolerates re-encoding and rescaling while still
-        rejecting unrelated shots.
+        rejecting unrelated shots. Used for nomination support counts, and as
+        the accept threshold when verification is off.
     decision_gap
         How much worse (``G``) the runner-up episode must be before a match is
-        called confident rather than ambiguous.
+        called confident rather than ambiguous, in pHash cost units.
     agreement_bonus, max_agreement_bonus
         Each additional agreeing still shaves ``agreement_bonus`` off the cost,
         up to ``max_agreement_bonus``. Several stills of the same episode
@@ -55,6 +57,29 @@ class ScoringConfig:
     dhash_threshold, dhash_penalty
         A hit whose dHash disagrees this badly is treated as a probable pHash
         collision: it stops counting as support and its cost is penalised.
+    verify
+        When true, pHash only nominates candidate timestamps and a dense NCC
+        pass decides acceptance.
+    verify_candidates
+        How many temporally separated pHash peaks to reconsider per still.
+    verify_separation_s
+        Minimum seconds between nominated peaks for the same still.
+    verify_window_s
+        Half-width of the dense re-decode window around each nominee.
+    verify_interval_s
+        Sampling interval inside the verification window.
+    verify_threshold
+        Minimum NCC for a pair to be feasible when verification is on.
+    verify_soft_threshold
+        When matching a closed episode set (``--episodes``), NCC at or above
+        this value may still be accepted if the mutual-best soft gap holds.
+        Ignored when the season pool is unrestricted.
+    verify_gap
+        Mutual-best margin in NCC units (``cost = 1 - ncc``).
+    verify_soft_gap
+        Mutual-best margin required for soft-threshold accepts.
+    verify_patch_size
+        Side length of the square patch used for NCC.
 
     Examples
     --------
@@ -68,6 +93,16 @@ class ScoringConfig:
     max_agreement_bonus: float = 3.0
     dhash_threshold: int = 22
     dhash_penalty: float = 6.0
+    verify: bool = True
+    verify_candidates: int = 8
+    verify_separation_s: float = 30.0
+    verify_window_s: float = 0.6
+    verify_interval_s: float = 0.1
+    verify_threshold: float = 0.65
+    verify_soft_threshold: float = 0.50
+    verify_gap: float = 0.05
+    verify_soft_gap: float = 0.05
+    verify_patch_size: int = 64
 
     def __post_init__(self) -> None:
         """Validate the thresholds."""
@@ -75,6 +110,26 @@ class ScoringConfig:
             raise ValueError("match_threshold must be between 0 and 64 bits")
         if self.decision_gap < 0:
             raise ValueError("decision_gap must not be negative")
+        if self.verify_candidates < 1:
+            raise ValueError("verify_candidates must be at least 1")
+        if self.verify_separation_s < 0:
+            raise ValueError("verify_separation_s must not be negative")
+        if self.verify_window_s <= 0:
+            raise ValueError("verify_window_s must be positive")
+        if self.verify_interval_s <= 0:
+            raise ValueError("verify_interval_s must be positive")
+        if not 0.0 <= self.verify_threshold <= 1.0:
+            raise ValueError("verify_threshold must be between 0 and 1")
+        if not 0.0 <= self.verify_soft_threshold <= 1.0:
+            raise ValueError("verify_soft_threshold must be between 0 and 1")
+        if self.verify_soft_threshold > self.verify_threshold:
+            raise ValueError("verify_soft_threshold must not exceed verify_threshold")
+        if self.verify_gap < 0:
+            raise ValueError("verify_gap must not be negative")
+        if self.verify_soft_gap < 0:
+            raise ValueError("verify_soft_gap must not be negative")
+        if self.verify_patch_size < 8:
+            raise ValueError("verify_patch_size must be at least 8")
 
 
 def hash_stills(
@@ -260,12 +315,49 @@ def score_episode(
 
 def _search(index: FrameIndex, hashes: ImageHashes) -> tuple[int, int, float] | None:
     """Return ``(phash distance, dhash distance, timestamp)`` of the closest frame."""
-    if len(index) == 0:
-        return None
+    candidates = search_candidates(index, hashes, k=1, min_separation_s=0.0)
+    return candidates[0] if candidates else None
+
+
+def search_candidates(
+    index: FrameIndex,
+    hashes: ImageHashes,
+    *,
+    k: int = 8,
+    min_separation_s: float = 30.0,
+) -> list[tuple[int, int, float]]:
+    """Return the strongest pHash peaks for ``hashes`` inside ``index``.
+
+    Candidates are not gated by ``match_threshold``: a true still can sit at
+    Hamming distance 14-16 after aspect mismatch and still verify under NCC.
+    Temporal non-maximum suppression keeps peaks at least ``min_separation_s``
+    apart so the verifier does not re-decode the same shot.
+
+    Returns
+    -------
+    list of (phash_distance, dhash_distance, timestamp)
+        Best first, length at most ``k``.
+    """
+    if len(index) == 0 or k < 1:
+        return []
+
     distances = hamming_distances(hashes.phash, index.phashes)
-    position = int(np.argmin(distances))
-    dhash_distance = int(hamming_distances(hashes.dhash, index.dhashes[position : position + 1])[0])
-    return int(distances[position]), dhash_distance, float(index.timestamps[position])
+    order = np.argsort(distances)
+    picked: list[tuple[int, int, float]] = []
+    picked_times: list[float] = []
+
+    for position in order:
+        timestamp = float(index.timestamps[position])
+        if any(abs(timestamp - prior) < min_separation_s for prior in picked_times):
+            continue
+        dhash_distance = int(
+            hamming_distances(hashes.dhash, index.dhashes[position : position + 1])[0]
+        )
+        picked.append((int(distances[position]), dhash_distance, timestamp))
+        picked_times.append(timestamp)
+        if len(picked) >= k:
+            break
+    return picked
 
 
 def score_file(

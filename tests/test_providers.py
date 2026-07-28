@@ -118,6 +118,18 @@ class TestTmdbClient:
         with pytest.raises(ProviderError):
             client.season_episodes("4224", 99)
 
+    def test_episode_images_omit_language_filters_to_keep_all_stills(
+        self, recorded_api, cache_dir
+    ):
+        TmdbClient(
+            api_key="k", client=recorded_api.client(), cache=JsonCache(cache_dir)
+        ).episode_stills("4224", 2, 1)
+
+        images_request = next(r for r in recorded_api.requests if r.url.path.endswith("/images"))
+        params = dict(images_request.url.params)
+        assert "language" not in params
+        assert "include_image_language" not in params
+
 
 class TestTvdbClient:
     def test_logs_in_once_and_reuses_the_token(self, tvdb, recorded_api):

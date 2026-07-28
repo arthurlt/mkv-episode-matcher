@@ -151,6 +151,38 @@ def match(
         float,
         typer.Option("--gap", "-g", min=0.0, help="Margin the runner-up must lose by."),
     ] = 4.0,
+    verify: Annotated[
+        bool,
+        typer.Option(
+            "--verify/--no-verify",
+            help="Dense NCC verification of pHash nominees (aspect-aware). On by default.",
+        ),
+    ] = True,
+    verify_candidates: Annotated[
+        int,
+        typer.Option(
+            "--verify-candidates",
+            min=1,
+            help="Temporally separated pHash peaks to verify per still.",
+        ),
+    ] = 8,
+    verify_threshold: Annotated[
+        float,
+        typer.Option(
+            "--verify-threshold",
+            min=0.0,
+            max=1.0,
+            help="Minimum NCC for a verified hit.",
+        ),
+    ] = 0.65,
+    verify_gap: Annotated[
+        float,
+        typer.Option(
+            "--verify-gap",
+            min=0.0,
+            help="Mutual-best margin in NCC cost units (cost = 1 - ncc).",
+        ),
+    ] = 0.05,
     workers: Annotated[
         int, typer.Option("--workers", "-w", min=1, help="Concurrent ffmpeg and download workers.")
     ] = 4,
@@ -257,7 +289,14 @@ def match(
                 sample_width=sample_width,
                 keyframes_only=keyframes_only,
             ),
-            scoring=ScoringConfig(match_threshold=threshold, decision_gap=gap),
+            scoring=ScoringConfig(
+                match_threshold=threshold,
+                decision_gap=gap,
+                verify=verify,
+                verify_candidates=verify_candidates,
+                verify_threshold=verify_threshold,
+                verify_gap=verify_gap,
+            ),
             duration_filter=DurationFilter(
                 min_duration_s=min_minutes * 60,
                 max_duration_s=None if max_minutes is None else max_minutes * 60,

@@ -20,6 +20,7 @@ from mkv_episode_matcher.score_visual import (
     score_all,
     score_episode,
     score_file,
+    search_candidates,
 )
 
 from .conftest import make_pattern, still_bytes
@@ -288,3 +289,39 @@ class TestHashStills:
         )
 
         assert len(hashed) == 1
+
+
+class TestSearchCandidates:
+    def test_returns_the_closest_peak_first(self):
+        frames = [hash_array(make_pattern(seed)) for seed in (10, 11, 12, 13)]
+        target = hash_array(make_pattern(12))
+
+        candidates = search_candidates(
+            index_of(frames, step=2.0), target, k=3, min_separation_s=0.0
+        )
+
+        assert candidates[0][0] == 0
+        assert candidates[0][2] == pytest.approx(4.0)
+
+    def test_enforces_temporal_non_maximum_suppression(self):
+        # Pattern A at t=0 and t=20; filler elsewhere. Separation of 5s keeps both.
+        hashes = [hash_array(make_pattern(5 if i in {0, 20} else 9)) for i in range(21)]
+        index = index_of(hashes, step=1.0)
+        target = hash_array(make_pattern(5))
+
+        candidates = search_candidates(index, target, k=3, min_separation_s=5.0)
+
+        times = [stamp for _, _, stamp in candidates]
+        assert times[:2] == pytest.approx([0.0, 20.0])
+        ordered = sorted(times)
+        assert min(ordered[i + 1] - ordered[i] for i in range(len(ordered) - 1)) >= 5.0
+
+    def test_candidates_are_not_gated_by_match_threshold(self):
+        frames = [hash_array(make_pattern(seed)) for seed in (1, 2, 3)]
+        # A different pattern will have a large distance, but must still be nominated.
+        target = hash_array(make_pattern(99))
+
+        candidates = search_candidates(index_of(frames), target, k=2, min_separation_s=0.0)
+
+        assert len(candidates) == 2
+        assert candidates[0][0] > 12
