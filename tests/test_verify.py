@@ -73,7 +73,7 @@ class TestAspectAlignedPairs:
 
 
 class TestStillUniqueness:
-    def test_shared_still_is_demoted_across_files(self):
+    def test_weaker_shared_still_claim_is_dropped_stronger_kept(self):
         still = Still("tmdb", "https://img/shared.jpg")
         episode = Episode(season=2, number=1, title="One", stills=(still,))
 
@@ -96,9 +96,39 @@ class TestStillUniqueness:
             [file_score("a.mkv", 0.80), file_score("b.mkv", 0.70)], floor=0.5
         )
 
-        assert demoted[0].scores[0].ncc == pytest.approx(0.40)
-        assert demoted[1].scores[0].ncc == pytest.approx(0.35)
-        assert demoted[0].scores[0].cost == pytest.approx(0.60)
+        assert demoted[0].scores[0].ncc == pytest.approx(0.80)
+        assert demoted[0].scores[0].cost == pytest.approx(0.20)
+        assert demoted[1].scores[0].ncc is None
+        assert demoted[1].scores[0].cost == float("inf")
+
+    def test_raising_candidates_must_not_erase_a_clear_winner(self):
+        """A soft false peak on the same still must not halve a strong match."""
+        still = Still("tmdb", "https://img/e01.jpg")
+        episode = Episode(season=2, number=1, title="One", stills=(still,))
+
+        def file_score(name: str, value: float, supporting: int = 0) -> FileScores:
+            hit = StillHit(still=still, distance=16, timestamp=120.0, dhash_distance=22)
+            return FileScores(
+                video=VideoFile(Path(name), 100.0, 1, 1),
+                scores=(
+                    EpisodeScore(
+                        episode=episode,
+                        best_hit=hit,
+                        supporting_stills=supporting,
+                        cost=1.0 - value,
+                        ncc=value,
+                    ),
+                ),
+            )
+
+        demoted = apply_still_uniqueness(
+            [file_score("E1.mkv", 0.837, supporting=6), file_score("E2.mkv", 0.55)],
+            floor=0.5,
+        )
+
+        assert demoted[0].scores[0].ncc == pytest.approx(0.837)
+        assert demoted[0].scores[0].ncc >= 0.65
+        assert demoted[1].scores[0].ncc is None
 
     def test_unique_still_is_unchanged(self):
         still = Still("tmdb", "https://img/unique.jpg")

@@ -356,11 +356,12 @@ def load_still_images(still_paths: dict[str, Path]) -> dict[str, np.ndarray]:
 
 
 def apply_still_uniqueness(scored: Sequence[FileScores], *, floor: float = 0.5) -> list[FileScores]:
-    """Demote stills that verify strongly against many files.
+    """Drop non-winning files that share a still's best verification.
 
-    A promotional or establishing shot that scores above ``floor`` on several
-    rips is treated as non-discriminative: each file's NCC for that still is
-    scaled by ``1 / count``. Unique stills (count 1) are unchanged.
+    When the same still URL verifies above ``floor`` on more than one file, only
+    the strongest claim keeps its NCC. Weaker claimers lose that hit entirely so
+    a soft false peak (common when ``verify_candidates`` is raised) cannot drag
+    a clear winner under the accept threshold by equal-weight demotion.
     """
     # still_url -> list of (file_index, episode_number, ncc)
     claims: dict[str, list[tuple[int, int, float]]] = {}
@@ -372,39 +373,43 @@ def apply_still_uniqueness(scored: Sequence[FileScores], *, floor: float = 0.5) 
                 (file_index, score.episode.number, score.ncc)
             )
 
-    weight_by_url = {
-        url: 1.0 / len(entries) if len(entries) > 1 else 1.0 for url, entries in claims.items()
-    }
-    if all(weight == 1.0 for weight in weight_by_url.values()):
+    # url -> (file_index, episode_number) of the strongest claim.
+    winners: dict[str, tuple[int, int]] = {}
+    for url, entries in claims.items():
+        if len(entries) <= 1:
+            continue
+        best_file, best_episode, _ = max(entries, key=lambda entry: entry[2])
+        winners[url] = (best_file, best_episode)
+
+    if not winners:
         return list(scored)
 
     updated: list[FileScores] = []
-    for file_scores in scored:
+    for file_index, file_scores in enumerate(scored):
         new_scores = []
         for score in file_scores.scores:
             if score.best_hit is None or score.ncc is None:
                 new_scores.append(score)
                 continue
-            weight = weight_by_url.get(score.best_hit.still.url, 1.0)
-            if weight >= 1.0:
+            url = score.best_hit.still.url
+            winner = winners.get(url)
+            if winner is None or winner == (file_index, score.episode.number):
                 new_scores.append(score)
                 continue
-            adjusted = score.ncc * weight
-            new_scores.append(
-                replace(
-                    score,
-                    ncc=adjusted,
-                    cost=max(0.0, 1.0 - adjusted),
-                    supporting_stills=0 if adjusted < floor else score.supporting_stills,
-                )
-            )
             logger.debug(
-                "demoted shared still on %s/%s: ncc %.3f -> %.3f (weight %.2f)",
+                "dropped shared still on %s/%s: ncc %.3f (winner kept)",
                 file_scores.video.name,
                 score.episode.code,
                 score.ncc,
-                adjusted,
-                weight,
+            )
+            new_scores.append(
+                replace(
+                    score,
+                    best_hit=None,
+                    supporting_stills=0,
+                    cost=float("inf"),
+                    ncc=None,
+                )
             )
         updated.append(FileScores(video=file_scores.video, scores=tuple(new_scores)))
     return updated
