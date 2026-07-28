@@ -469,7 +469,7 @@ def apply_duration_corroboration(
     match_tolerance_s: float = 90.0,
     mismatch_s: float = 120.0,
     boost: float = 0.12,
-    penalty: float = 0.15,
+    penalty: float = 0.20,
 ) -> list[FileScores]:
     """Adjust NCC using episode runtime when it agrees or conflicts with the file.
 
@@ -510,7 +510,12 @@ def match_by_unique_duration(
     *,
     tolerance_s: float = 90.0,
 ) -> list[MatchResult]:
-    """Fill unmatched closed-world slots by closest unique episode runtime.
+    """Fill unresolved closed-world slots by closest unique episode runtime.
+
+    Considers both ``unmatched`` and ``ambiguous`` files that have no episode
+    assigned yet. Soft visual collisions often leave the right leftovers
+    ambiguous (their best still pointed at an episode another file already
+    won); those still resolve cleanly when runtimes are distinctive.
 
     Each leftover file picks its closest leftover episode whose runtime is
     within ``tolerance_s``. The picks are applied only when that mapping is
@@ -525,7 +530,8 @@ def match_by_unique_duration(
     leftover_results = [
         (index, result)
         for index, result in enumerate(results)
-        if result.status is MatchStatus.UNMATCHED
+        if result.status in {MatchStatus.UNMATCHED, MatchStatus.AMBIGUOUS}
+        and result.episode is None
     ]
     if not leftover_results or not leftover_episodes:
         return list(results)

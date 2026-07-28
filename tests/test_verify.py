@@ -208,7 +208,7 @@ class TestDurationCorroboration:
         adjusted = apply_duration_corroboration(scored)[0]
 
         assert adjusted.scores[0].ncc == pytest.approx(0.745)
-        assert adjusted.scores[1].ncc == pytest.approx(0.395)
+        assert adjusted.scores[1].ncc == pytest.approx(0.345)
 
 
 class TestUniqueDurationFallback:
@@ -236,3 +236,42 @@ class TestUniqueDurationFallback:
         by_name = {result.video.name: result.episode.number for result in filled}
         assert by_name == {"t03.mkv": 8, "t02.mkv": 9}
         assert "unique runtime" in filled[0].notes[0]
+
+    def test_fills_ambiguous_leftovers_after_soft_visual_collisions(self):
+        """Disc 2 regression: t00/t04 stayed ambiguous while wanting stolen episodes."""
+        episodes = [
+            Episode(season=2, number=11, title="Midnight Train", runtime_minutes=42),
+            Episode(season=2, number=12, title="Pyramid", runtime_minutes=49),
+        ]
+        results = [
+            MatchResult(
+                video=VideoFile(Path("t00.mkv"), 2996.118, 1, 1),
+                status=MatchStatus.AMBIGUOUS,
+                ncc=0.56,
+                notes=["another file is a better fit for S02E10"],
+            ),
+            MatchResult(
+                video=VideoFile(Path("t01.mkv"), 2769.141, 1, 1),
+                status=MatchStatus.MATCHED,
+                episode=Episode(season=2, number=10, title="No Weddings", runtime_minutes=46),
+                ncc=0.625,
+            ),
+            MatchResult(
+                video=VideoFile(Path("t04.mkv"), 2546.71, 1, 1),
+                status=MatchStatus.AMBIGUOUS,
+                ncc=0.522,
+                notes=["another file is a better fit for S02E09"],
+            ),
+        ]
+
+        filled = match_by_unique_duration(results, episodes)
+        by_name = {
+            result.video.name: (
+                result.status,
+                None if result.episode is None else result.episode.number,
+            )
+            for result in filled
+        }
+        assert by_name["t00.mkv"] == (MatchStatus.MATCHED, 12)
+        assert by_name["t04.mkv"] == (MatchStatus.MATCHED, 11)
+        assert by_name["t01.mkv"] == (MatchStatus.MATCHED, 10)

@@ -484,13 +484,14 @@ class TestClosedWorldDisc2:
             ep(11, "Midnight Train", 42),
             ep(12, "Pyramid", 49),
         ]
-        # File durations and NCC peaks from the user's Disc 2 JSON.
+        # Post-corroboration NCC peaks from the user's second Disc 2 JSON.
+        # Soft visual matching leaves t00/t04 ambiguous; duration fallback finishes.
         files = {
-            "t00.mkv": (2996.118, {8: 0.408, 11: 0.499, 12: 0.397}),
-            "t01.mkv": (2769.141, {8: 0.332, 9: 0.545, 10: 0.625, 11: 0.378, 12: 0.323}),
-            "t02.mkv": (2585.583, {8: 0.404, 10: 0.586, 11: 0.358, 12: 0.364}),
-            "t03.mkv": (2730.602, {8: 0.407, 11: 0.396, 12: 0.342}),
-            "t04.mkv": (2546.710, {8: 0.412, 11: 0.334, 12: 0.517}),
+            "t00.mkv": (2996.118, {8: 0.258, 9: 0.347, 10: 0.560, 11: 0.349, 12: 0.517}),
+            "t01.mkv": (2769.141, {8: 0.452, 9: 0.395, 10: 0.625, 11: 0.228, 12: 0.173}),
+            "t02.mkv": (2585.583, {8: 0.254, 9: 0.643, 10: 0.436, 11: 0.478, 12: 0.214}),
+            "t03.mkv": (2730.602, {8: 0.527, 9: 0.437, 10: 0.409, 11: 0.396, 12: 0.192}),
+            "t04.mkv": (2546.710, {8: 0.262, 9: 0.522, 10: 0.472, 11: 0.334, 12: 0.367}),
         }
         scored = []
         for name, (duration, nccs) in files.items():

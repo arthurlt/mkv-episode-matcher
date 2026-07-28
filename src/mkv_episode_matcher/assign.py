@@ -375,7 +375,12 @@ def _verdict(
     episode_gap = _episode_side_gap(cost_matrix, row, ranked[0], episodes)
     chosen_by_solver = column is not None and episodes[column].number == best.episode.number
     if uses_ncc and best.ncc is not None:
-        confidence = confidence_of_ncc(best.ncc, min(file_gap, episode_gap), config)
+        confidence = confidence_of_ncc(
+            best.ncc,
+            min(file_gap, episode_gap),
+            config,
+            floor=config.verify_soft_threshold if soft else config.verify_threshold,
+        )
     else:
         confidence = confidence_of(best.cost, min(file_gap, episode_gap), config)
 
@@ -478,8 +483,21 @@ def confidence_of(cost: float, gap: float, config: ScoringConfig) -> float:
     return round(max(0.0, min(1.0, distance_margin, gap_margin)), 3)
 
 
-def confidence_of_ncc(ncc_value: float, gap: float, config: ScoringConfig) -> float:
+def confidence_of_ncc(
+    ncc_value: float,
+    gap: float,
+    config: ScoringConfig,
+    *,
+    floor: float | None = None,
+) -> float:
     """Rate an NCC-verified candidate from 0 to 1.
+
+    Parameters
+    ----------
+    floor
+        NCC feasibility floor used for the distance margin. Defaults to
+        ``verify_threshold``; soft closed-world accepts pass the soft floor so
+        confidence is not stuck at zero for every gray-zone match.
 
     Examples
     --------
@@ -489,11 +507,12 @@ def confidence_of_ncc(ncc_value: float, gap: float, config: ScoringConfig) -> fl
     >>> confidence_of_ncc(0.65, 0.2, config)
     0.0
     """
-    span = 1.0 - config.verify_threshold
+    threshold = config.verify_threshold if floor is None else floor
+    span = 1.0 - threshold
     if span <= 0:
-        ncc_margin = 1.0 if ncc_value >= config.verify_threshold else 0.0
+        ncc_margin = 1.0 if ncc_value >= threshold else 0.0
     else:
-        ncc_margin = (ncc_value - config.verify_threshold) / span
+        ncc_margin = (ncc_value - threshold) / span
     gap_margin = 1.0 if config.verify_gap <= 0 else gap / config.verify_gap
     return round(max(0.0, min(1.0, ncc_margin, gap_margin)), 3)
 
