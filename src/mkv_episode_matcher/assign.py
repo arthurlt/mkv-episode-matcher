@@ -153,6 +153,7 @@ def assign(
     config: ScoringConfig,
     skipped: dict[Path, SkipReason] | None = None,
     unindexed: Sequence[VideoFile] = (),
+    closed_world: bool = False,
 ) -> list[MatchResult]:
     """Turn per-file episode scores into final, mutually consistent verdicts.
 
@@ -167,6 +168,10 @@ def assign(
         Files excluded before matching, with the reason.
     unindexed
         Files that could not be decoded, reported as unmatched.
+    closed_world
+        When true (``--episodes`` filter), soft-threshold NCC hits may be
+        accepted if the mutual-best soft gap holds. Full-season runs keep the
+        hard threshold so weak cross-episode collisions stay unmatched.
 
     Returns
     -------
@@ -176,7 +181,7 @@ def assign(
     results: list[MatchResult] = []
 
     if scored:
-        results.extend(_assign_scored(scored, config))
+        results.extend(_assign_scored(scored, config, closed_world=closed_world))
 
     for path, reason in (skipped or {}).items():
         results.append(
@@ -200,14 +205,19 @@ def assign(
     return sorted(results, key=lambda result: result.video.name)
 
 
-def _assign_scored(scored: Sequence[FileScores], config: ScoringConfig) -> list[MatchResult]:
+def _assign_scored(
+    scored: Sequence[FileScores],
+    config: ScoringConfig,
+    *,
+    closed_world: bool = False,
+) -> list[MatchResult]:
     """Solve the assignment and apply the mutual-best decision rules."""
     episodes = _episode_axis(scored)
     uses_ncc = _uses_ncc(scored)
     cost_matrix = np.array(
         [
             [
-                score.cost if _feasible(score, config) else INF
+                score.cost if _feasible(score, config, closed_world=closed_world) else INF
                 for score in _ordered(file_scores, episodes)
             ]
             for file_scores in scored
@@ -219,7 +229,12 @@ def _assign_scored(scored: Sequence[FileScores], config: ScoringConfig) -> list[
     if uses_ncc:
         # Extra column lets a file stay unmatched rather than absorb a weak
         # pairing by elimination. Cost equals the feasibility boundary.
-        reject_cost = 1.0 - config.verify_threshold
+        floor = (
+            config.verify_soft_threshold
+            if closed_world
+            else config.verify_threshold
+        )
+        reject_cost = 1.0 - floor
         cost_matrix = np.concatenate(
             [
                 cost_matrix,
@@ -245,6 +260,7 @@ def _assign_scored(scored: Sequence[FileScores], config: ScoringConfig) -> list[
                 episodes,
                 config,
                 uses_ncc=uses_ncc,
+                closed_world=closed_world,
             )
         )
     return results
@@ -281,21 +297,36 @@ def _ordered(file_scores: FileScores, episodes: Sequence[Episode]) -> list[Episo
     ]
 
 
-def _feasible(score: EpisodeScore, config: ScoringConfig) -> bool:
+def _feasible(
+    score: EpisodeScore, config: ScoringConfig, *, closed_world: bool = False
+) -> bool:
     """Return whether a score is a usable hit at all.
 
-    With NCC verification, feasibility is ``ncc >= verify_threshold``. Otherwise
-    it is judged on the pHash cost, so the dHash collision penalty can push a
-    suspicious hit out of contention entirely.
+    With NCC verification, feasibility is ``ncc >= verify_threshold``, or
+    ``ncc >= verify_soft_threshold`` when matching a closed episode set.
+    Otherwise it is judged on the pHash cost, so the dHash collision penalty
+    can push a suspicious hit out of contention entirely.
     """
     if score.ncc is not None:
-        return score.ncc >= config.verify_threshold
+        floor = (
+            config.verify_soft_threshold
+            if closed_world
+            else config.verify_threshold
+        )
+        return score.ncc >= floor
     return score.best_hit is not None and score.cost <= config.match_threshold
 
 
-def _decision_gap(config: ScoringConfig, *, uses_ncc: bool) -> float:
+def _decision_gap(
+    config: ScoringConfig,
+    *,
+    uses_ncc: bool,
+    soft: bool = False,
+) -> float:
     """Return the mutual-best margin for the active cost regime."""
-    return config.verify_gap if uses_ncc else config.decision_gap
+    if not uses_ncc:
+        return config.decision_gap
+    return config.verify_soft_gap if soft else config.verify_gap
 
 
 def _verdict(
@@ -307,6 +338,7 @@ def _verdict(
     config: ScoringConfig,
     *,
     uses_ncc: bool = False,
+    closed_world: bool = False,
 ) -> MatchResult:
     """Decide one file's status from the assignment and the surrounding costs."""
     video = file_scores.video
@@ -315,9 +347,16 @@ def _verdict(
     best = ranked[0] if ranked else None
     runner_up = ranked[1] if len(ranked) > 1 else None
     best_hit = best.best_hit if best else None
-    gap_needed = _decision_gap(config, uses_ncc=uses_ncc)
+    soft = bool(
+        uses_ncc
+        and closed_world
+        and best is not None
+        and best.ncc is not None
+        and best.ncc < config.verify_threshold
+    )
+    gap_needed = _decision_gap(config, uses_ncc=uses_ncc, soft=soft)
 
-    if best is None or best_hit is None or not _feasible(best, config):
+    if best is None or best_hit is None or not _feasible(best, config, closed_world=closed_world):
         note = (
             "no still verified above the NCC threshold"
             if uses_ncc
@@ -360,6 +399,15 @@ def _verdict(
                 best_hit.timestamp,
                 best.supporting_stills,
             )
+        notes = (
+            [
+                f"accepted under soft NCC threshold "
+                f"({best.ncc:.3f} < {config.verify_threshold:.2f}; "
+                f"closed episode set)"
+            ]
+            if soft and best.ncc is not None
+            else []
+        )
         return MatchResult(
             video=video,
             status=MatchStatus.MATCHED,
@@ -371,6 +419,7 @@ def _verdict(
             supporting_stills=best.supporting_stills,
             confidence=confidence,
             ncc=best.ncc,
+            notes=notes,
         )
 
     notes = []

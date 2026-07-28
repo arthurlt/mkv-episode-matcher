@@ -11,14 +11,18 @@ from mkv_episode_matcher.models import (
     Episode,
     EpisodeScore,
     FileScores,
+    MatchResult,
+    MatchStatus,
     Still,
     StillHit,
     VideoFile,
 )
 from mkv_episode_matcher.verify import (
+    apply_duration_corroboration,
     apply_still_uniqueness,
     aspect_aligned_pairs,
     best_ncc,
+    match_by_unique_duration,
     ncc,
 )
 
@@ -130,6 +134,35 @@ class TestStillUniqueness:
         assert demoted[0].scores[0].ncc >= 0.65
         assert demoted[1].scores[0].ncc is None
 
+    def test_soft_shared_claims_are_not_locked(self):
+        """Gray-zone peaks must not starve other files of the same still."""
+        still = Still("tmdb", "https://img/e09.jpg")
+        episode = Episode(season=2, number=9, title="Beard", stills=(still,))
+
+        def file_score(name: str, value: float) -> FileScores:
+            hit = StillHit(still=still, distance=18, timestamp=100.0, dhash_distance=20)
+            return FileScores(
+                video=VideoFile(Path(name), 100.0, 1, 1),
+                scores=(
+                    EpisodeScore(
+                        episode=episode,
+                        best_hit=hit,
+                        supporting_stills=0,
+                        cost=1.0 - value,
+                        ncc=value,
+                    ),
+                ),
+            )
+
+        demoted = apply_still_uniqueness(
+            [file_score("t01.mkv", 0.545), file_score("t02.mkv", 0.510)],
+            floor=0.5,
+            lock_threshold=0.65,
+        )
+
+        assert demoted[0].scores[0].ncc == pytest.approx(0.545)
+        assert demoted[1].scores[0].ncc == pytest.approx(0.510)
+
     def test_unique_still_is_unchanged(self):
         still = Still("tmdb", "https://img/unique.jpg")
         episode = Episode(season=2, number=1, title="One", stills=(still,))
@@ -150,3 +183,56 @@ class TestStillUniqueness:
         ]
 
         assert apply_still_uniqueness(scored)[0].scores[0].ncc == pytest.approx(0.8)
+
+
+class TestDurationCorroboration:
+    def test_boosts_matching_runtime_and_penalises_mismatch(self):
+        still = Still("tmdb", "https://img/a.jpg")
+        match_ep = Episode(season=2, number=10, title="A", stills=(still,), runtime_minutes=46)
+        other_ep = Episode(season=2, number=9, title="B", stills=(still,), runtime_minutes=43)
+        hit = StillHit(still=still, distance=18, timestamp=1.0, dhash_distance=18)
+        scored = [
+            FileScores(
+                video=VideoFile(Path("t01.mkv"), 2769.0, 1, 1),
+                scores=(
+                    EpisodeScore(
+                        episode=match_ep, best_hit=hit, supporting_stills=0, cost=0.375, ncc=0.625
+                    ),
+                    EpisodeScore(
+                        episode=other_ep, best_hit=hit, supporting_stills=0, cost=0.455, ncc=0.545
+                    ),
+                ),
+            )
+        ]
+
+        adjusted = apply_duration_corroboration(scored)[0]
+
+        assert adjusted.scores[0].ncc == pytest.approx(0.745)
+        assert adjusted.scores[1].ncc == pytest.approx(0.395)
+
+
+class TestUniqueDurationFallback:
+    def test_fills_unmatched_when_runtimes_are_a_unique_bijection(self):
+        episodes = [
+            Episode(season=2, number=8, title="Man City", runtime_minutes=46),
+            Episode(season=2, number=9, title="Beard", runtime_minutes=43),
+        ]
+        results = [
+            MatchResult(
+                video=VideoFile(Path("t03.mkv"), 2730.0, 1, 1),
+                status=MatchStatus.UNMATCHED,
+                notes=["no still verified above the NCC threshold"],
+            ),
+            MatchResult(
+                video=VideoFile(Path("t02.mkv"), 2585.0, 1, 1),
+                status=MatchStatus.UNMATCHED,
+                notes=["no still verified above the NCC threshold"],
+            ),
+        ]
+
+        filled = match_by_unique_duration(results, episodes)
+
+        assert all(result.status is MatchStatus.MATCHED for result in filled)
+        by_name = {result.video.name: result.episode.number for result in filled}
+        assert by_name == {"t03.mkv": 8, "t02.mkv": 9}
+        assert "unique runtime" in filled[0].notes[0]

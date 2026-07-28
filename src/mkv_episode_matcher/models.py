@@ -245,8 +245,8 @@ class MatchResult:
     def renameable(self) -> bool:
         """Return whether this result may be auto-renamed.
 
-        Only a confident, visually evidenced match qualifies; there is no
-        duration-only path to a rename.
+        Confident ``matched`` verdicts qualify, including closed-world unique
+        runtime fallbacks when provider stills were inconclusive.
 
         Examples
         --------

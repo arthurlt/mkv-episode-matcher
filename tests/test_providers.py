@@ -118,7 +118,7 @@ class TestTmdbClient:
         with pytest.raises(ProviderError):
             client.season_episodes("4224", 99)
 
-    def test_episode_images_omit_language_and_include_null_tagged_stills(
+    def test_episode_images_omit_language_filters_to_keep_all_stills(
         self, recorded_api, cache_dir
     ):
         TmdbClient(
@@ -128,7 +128,7 @@ class TestTmdbClient:
         images_request = next(r for r in recorded_api.requests if r.url.path.endswith("/images"))
         params = dict(images_request.url.params)
         assert "language" not in params
-        assert params.get("include_image_language") == "en,null"
+        assert "include_image_language" not in params
 
 
 class TestTvdbClient:

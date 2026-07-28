@@ -166,14 +166,20 @@ class TmdbClient(JsonApiClient):
         return sorted(episodes, key=lambda episode: episode.number)
 
     def episode_stills(self, series_id: str, season: int, number: int) -> tuple[Still, ...]:
-        """Return every still TMDB holds for one episode."""
+        """Return every still TMDB holds for one episode.
+
+        Episode stills are often tagged ``iso_639_1=null`` (and sometimes other
+        languages for regional uploads). Restricting ``include_image_language``
+        to ``en,null`` drops those extras; with ``language`` also omitted, TMDB
+        returns the full still list. Sparse seasons (a couple of frames per
+        episode) need every usable screencap.
+        """
         try:
             payload = self._get(
                 f"/tv/{series_id}/season/{season}/episode/{number}/images",
-                extra={"include_image_language": "en,null"},
-                # v2: omit language= so null-tagged stills are returned. Bumped
-                # so caches that stored the old empty responses are not reused.
-                cache_key=f"tmdb/images/v2/{series_id}/{season}/{number}",
+                # v3: drop include_image_language so non-en/null tagged stills
+                # are kept. language= remains omitted (see include_language).
+                cache_key=f"tmdb/images/v3/{series_id}/{season}/{number}",
                 include_language=False,
             )
         except ProviderError as error:

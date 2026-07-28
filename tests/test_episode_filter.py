@@ -19,9 +19,24 @@ class TestParseEpisodeNumbers:
         with pytest.raises(ValueError, match="at least one"):
             parse_episode_numbers(" , ")
 
-    def test_rejects_inverted_range(self):
-        with pytest.raises(ValueError, match="invalid episode range"):
-            parse_episode_numbers("7-1")
+    def test_parses_high_episode_range(self):
+        assert parse_episode_numbers("8-12") == frozenset(range(8, 13))
+
+
+class TestClaimedEpisodeNumbers:
+    def test_reads_plex_style_names_for_the_requested_season(self, tmp_path):
+        from mkv_episode_matcher.episode_filter import claimed_episode_numbers
+
+        paths = [
+            tmp_path / "Show - S02E01 - A.mkv",
+            tmp_path / "Show - S02E07 - B.mkv",
+            tmp_path / "Show - S01E03 - C.mkv",
+            tmp_path / "title_t00.mkv",
+        ]
+        for path in paths:
+            path.write_bytes(b"")
+
+        assert claimed_episode_numbers(paths, season=2) == frozenset({1, 7})
 
 
 class TestFilterEpisodesByNumber:

@@ -70,8 +70,14 @@ class ScoringConfig:
         Sampling interval inside the verification window.
     verify_threshold
         Minimum NCC for a pair to be feasible when verification is on.
+    verify_soft_threshold
+        When matching a closed episode set (``--episodes``), NCC at or above
+        this value may still be accepted if the mutual-best soft gap holds.
+        Ignored when the season pool is unrestricted.
     verify_gap
         Mutual-best margin in NCC units (``cost = 1 - ncc``).
+    verify_soft_gap
+        Mutual-best margin required for soft-threshold accepts.
     verify_patch_size
         Side length of the square patch used for NCC.
 
@@ -93,7 +99,9 @@ class ScoringConfig:
     verify_window_s: float = 0.6
     verify_interval_s: float = 0.1
     verify_threshold: float = 0.65
+    verify_soft_threshold: float = 0.50
     verify_gap: float = 0.05
+    verify_soft_gap: float = 0.05
     verify_patch_size: int = 64
 
     def __post_init__(self) -> None:
@@ -112,8 +120,14 @@ class ScoringConfig:
             raise ValueError("verify_interval_s must be positive")
         if not 0.0 <= self.verify_threshold <= 1.0:
             raise ValueError("verify_threshold must be between 0 and 1")
+        if not 0.0 <= self.verify_soft_threshold <= 1.0:
+            raise ValueError("verify_soft_threshold must be between 0 and 1")
+        if self.verify_soft_threshold > self.verify_threshold:
+            raise ValueError("verify_soft_threshold must not exceed verify_threshold")
         if self.verify_gap < 0:
             raise ValueError("verify_gap must not be negative")
+        if self.verify_soft_gap < 0:
+            raise ValueError("verify_soft_gap must not be negative")
         if self.verify_patch_size < 8:
             raise ValueError("verify_patch_size must be at least 8")
 
